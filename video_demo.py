@@ -11,6 +11,7 @@ from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.data import detection_utils as utils
 from detectron2.data import transforms as T
 from PIL import Image
+from segment_anything import sam_model_registry, SamPredictor
 
 
 def setup(args):
@@ -66,6 +67,34 @@ def main(args):
         DetectionCheckpointer(model).load(args.model_path)
     else:
         DetectionCheckpointer(model).load('GLEE_Plus_joint.pth')
+
+    # Initialize SAM model
+    sam_checkpoint = getattr(args, 'sam_checkpoint', None)
+    if sam_checkpoint is None:
+        # Try alternative paths (relative to script location and project root)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        project_root = os.path.dirname(script_dir)
+        alt_paths = [
+            os.path.join(project_root, 'segment-anything', 'checkpoints', 'sam_vit_h_4b8939.pth'),
+            'segment-anything/checkpoints/sam_vit_h_4b8939.pth',
+            '../segment-anything/checkpoints/sam_vit_h_4b8939.pth',
+            os.path.join(script_dir, '..', 'segment-anything', 'checkpoints', 'sam_vit_h_4b8939.pth'),
+            'checkpoints/sam_vit_h_4b8939.pth',
+        ]
+        for alt_path in alt_paths:
+            abs_path = os.path.abspath(alt_path)
+            if os.path.exists(abs_path):
+                sam_checkpoint = abs_path
+                break
+        else:
+            raise FileNotFoundError(f"SAM checkpoint not found. Tried: {alt_paths}")
+    elif not os.path.exists(sam_checkpoint):
+        raise FileNotFoundError(f"SAM checkpoint not found at: {sam_checkpoint}")
+
+    sam_model = sam_model_registry["vit_h"](checkpoint=sam_checkpoint)
+    sam_model.to(device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+    sam_predictor = SamPredictor(sam_model)
+    print(f"SAM model loaded successfully from {sam_checkpoint}")
 
     # Determine input source
     if hasattr(args, 'input_video') and args.input_video:
@@ -186,18 +215,79 @@ def main(args):
                             scores = instances.scores.cpu().numpy() if isinstance(instances.scores, torch.Tensor) else instances.scores
                             labels = instances.pred_classes.cpu().numpy() if isinstance(instances.pred_classes, torch.Tensor) else instances.pred_classes
                             
-                            # Extract boxes
+                            # Extract boxes (keep in xyxy format for SAM)
                             if hasattr(instances.pred_boxes, 'tensor'):
-                                boxes = instances.pred_boxes.tensor.cpu().numpy()
+                                boxes_xyxy = instances.pred_boxes.tensor.cpu().numpy()  # Shape: (N, 4)
                             else:
-                                boxes = instances.pred_boxes.cpu().numpy()
+                                boxes_xyxy = instances.pred_boxes.cpu().numpy()
                             
-                            # Convert boxes from xyxy to xywh format
-                            if len(boxes.shape) == 2 and boxes.shape[1] == 4:
-                                boxes_xywh = boxes.copy()
-                                boxes_xywh[:, 2] = boxes[:, 2] - boxes[:, 0]  # width
-                                boxes_xywh[:, 3] = boxes[:, 3] - boxes[:, 1]  # height
-                                boxes = boxes_xywh
+                            # Convert to xywh for drawing (existing logic)
+                            if len(boxes_xyxy.shape) == 2 and boxes_xyxy.shape[1] == 4:
+                                boxes_xywh = boxes_xyxy.copy()
+                                boxes_xywh[:, 2] = boxes_xyxy[:, 2] - boxes_xyxy[:, 0]  # width
+                                boxes_xywh[:, 3] = boxes_xyxy[:, 3] - boxes_xyxy[:, 1]  # height
+                            else:
+                                boxes_xywh = boxes_xyxy
+                            
+                            # Generate SAM masks for detected objects
+                            masks = None
+                            mask_scores = None
+                            if len(boxes_xyxy) > 0:
+                                # Filter boxes by confidence before SAM (efficiency)
+                                valid_indices = scores >= confidence_threshold
+                                valid_boxes = boxes_xyxy[valid_indices].copy()
+                                
+                                if len(valid_boxes) > 0:
+                                    # Clip boxes to image bounds before SAM
+                                    h, w = img.shape[:2]
+                                    valid_boxes[:, 0] = np.clip(valid_boxes[:, 0], 0, w - 1)  # x1
+                                    valid_boxes[:, 1] = np.clip(valid_boxes[:, 1], 0, h - 1)  # y1
+                                    valid_boxes[:, 2] = np.clip(valid_boxes[:, 2], 0, w - 1)  # x2
+                                    valid_boxes[:, 3] = np.clip(valid_boxes[:, 3], 0, h - 1)  # y2
+                                    
+                                    # Set image once per frame
+                                    sam_predictor.set_image(img, image_format="RGB")
+                                    
+                                    # Process each box individually (SAM's predict expects single box)
+                                    masks_list = []
+                                    mask_scores_list = []
+                                    for box in valid_boxes:
+                                        mask, mask_score, _ = sam_predictor.predict(
+                                            box=box,
+                                            multimask_output=False  # Single best mask per box
+                                        )
+                                        masks_list.append(mask[0])  # Extract single mask from output
+                                        mask_scores_list.append(mask_score[0])  # Extract single score
+                                    
+                                    # Convert to numpy arrays
+                                    masks_all = np.array(masks_list)
+                                    mask_scores_all = np.array(mask_scores_list)
+                                    
+                                    # Create full mask array aligned with all detections
+                                    masks = np.zeros((len(scores), img.shape[0], img.shape[1]), dtype=bool)
+                                    mask_scores = np.zeros(len(scores))
+                                    masks[valid_indices] = masks_all
+                                    mask_scores[valid_indices] = mask_scores_all
+                                else:
+                                    masks = np.zeros((len(scores), img.shape[0], img.shape[1]), dtype=bool)
+                                    mask_scores = np.zeros(len(scores))
+                            else:
+                                masks = np.array([])
+                                mask_scores = np.array([])
+                            
+                            # Draw mask overlays first (so boxes appear on top)
+                            if masks is not None and len(masks) > 0:
+                                for i in range(len(scores)):
+                                    if scores[i] >= confidence_threshold and i < len(masks):
+                                        mask = masks[i]
+                                        if mask.any():  # Check if mask has any True pixels
+                                            # Create colored overlay
+                                            color_mask = np.zeros_like(img)
+                                            # Use different colors for different objects (optional)
+                                            color = (0, 255, 0)  # Green default
+                                            color_mask[mask] = color
+                                            # Blend with original image (30% opacity)
+                                            img = cv2.addWeighted(img, 1.0, color_mask, 0.3, 0)
                             
                             # Draw detections on this frame
                             num_instances = len(scores)
@@ -211,11 +301,11 @@ def main(args):
                                 
                                 total_detections += 1
                                 
-                                # Get box for this instance
-                                if len(boxes.shape) == 2:
-                                    box = boxes[i]
+                                # Get box for this instance (use xywh format)
+                                if len(boxes_xywh.shape) == 2:
+                                    box = boxes_xywh[i]
                                 else:
-                                    box = boxes[i] if i < len(boxes) else None
+                                    box = boxes_xywh[i] if i < len(boxes_xywh) else None
                                 
                                 # Draw bounding box if available
                                 if box is not None and len(box) == 4:
@@ -286,6 +376,7 @@ if __name__ == "__main__":
     parser.add_argument('--batch_size', type=int, default=10, help='number of frames to process per batch (default: 10)')
     parser.add_argument('--confidence_threshold', type=float, default=0.5, help='minimum confidence score threshold for detections (default: 0.5)')
     parser.add_argument('--classes', type=str, required=True, help='comma-separated list of custom class names for open-world detection (e.g., "pizza,plate,hand,car,person")')
+    parser.add_argument('--sam_checkpoint', type=str, default=None, help='path to SAM checkpoint (default: auto-detect)')
     
     args = parser.parse_args()
     print("Command Line Args:", args)
