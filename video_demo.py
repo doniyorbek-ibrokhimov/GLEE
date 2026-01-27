@@ -239,7 +239,8 @@ def main(args):
             label = batch_labels[inst_idx]
             
             # Filter by score threshold
-            if score < 0.3:
+            confidence_threshold = getattr(args, 'confidence_threshold', 0.5)
+            if score < confidence_threshold:
                 continue
             
             # Get mask and box for this instance
@@ -294,20 +295,20 @@ def main(args):
     output_dir = getattr(args, 'output_dir', './output_frames')
     os.makedirs(output_dir, exist_ok=True)
     
-    saved_count = 0
-    for frame_idx in all_frame_detections:
-        if len(all_frame_detections[frame_idx]) > 0:
-            img = frames[frame_idx].copy()
-            # Apply mask overlay
-            for det in all_frame_detections[frame_idx]:
-                mask = det['mask']
-                if mask.sum() > 0:
-                    img[~mask] = img[~mask] * 0.5  # Dim non-masked areas
-            output_path = os.path.join(output_dir, f'{frame_idx}.png')
-            Image.fromarray(img).save(output_path)
-            saved_count += 1
+    # saved_count = 0
+    # for frame_idx in all_frame_detections:
+    #     if len(all_frame_detections[frame_idx]) > 0:
+    #         img = frames[frame_idx].copy()
+    #         # Apply mask overlay
+    #         for det in all_frame_detections[frame_idx]:
+    #             mask = det['mask']
+    #             if mask.sum() > 0:
+    #                 img[~mask] = img[~mask] * 0.5  # Dim non-masked areas
+    #         output_path = os.path.join(output_dir, f'{frame_idx}.png')
+    #         Image.fromarray(img).save(output_path)
+    #         saved_count += 1
     
-    print(f"Saved {saved_count} masked frames to {output_dir}")
+    # print(f"Saved {saved_count} masked frames to {output_dir}")
     
     # Create output video if requested
     if hasattr(args, 'output_video') and args.output_video:
@@ -394,6 +395,7 @@ if __name__ == "__main__":
     parser.add_argument('--max_frames', type=int, default=None, help='maximum number of frames to process')
     parser.add_argument('--skip_frames', type=int, default=1, help='process every Nth frame (1=all frames)')
     parser.add_argument('--batch_size', type=int, default=10, help='number of frames to process per batch (default: 10)')
+    parser.add_argument('--confidence_threshold', type=float, default=0.5, help='minimum confidence score threshold for detections (default: 0.5)')
     
     args = parser.parse_args()
     print("Command Line Args:", args)
