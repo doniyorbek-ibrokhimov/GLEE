@@ -173,8 +173,16 @@ def main(args):
     batch_size = getattr(args, 'batch_size', 10)  # Process N frames at a time
     model.eval()
     
-    all_outputs = []
-    all_masks = []
+    # Initialize video writer early for incremental writing (memory efficient)
+    output_video_path = getattr(args, 'output_video', None)
+    out = None
+    if output_video_path:
+        print(f"Initializing output video: {output_video_path}")
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_video_path, fourcc, 30.0, (ori_width, ori_height))
+    
+    confidence_threshold = getattr(args, 'confidence_threshold', 0.5)
+    total_detections = 0
     
     print(f"Processing {len(frames)} frames in batches of {batch_size}...")
     
@@ -208,26 +216,25 @@ def main(args):
 
         with torch.no_grad():
             outputs = model(inputs)
-            # Convert outputs to expected format
-            # For image tasks (coco_clip), model returns list of dicts with "instances" key
-            # Each dict corresponds to one frame in the batch
-            converted_outputs = {
-                'pred_scores': [],
-                'pred_labels': [],
-                'pred_masks': [],
-                'pred_boxes': []
-            }
             
+            # Process outputs immediately and write to video (incremental processing)
             if isinstance(outputs, list):
-                # Process each frame's instances
-                for frame_idx, output_dict in enumerate(outputs):
+                # Process each frame's instances in this batch
+                for frame_in_batch, output_dict in enumerate(outputs):
+                    frame_idx = batch_start + frame_in_batch
+                    if frame_idx >= len(frames):
+                        break
+                    
+                    # Get the original frame
+                    img = batch_frames[frame_in_batch].copy()
+                    
+                    # Extract detections for this frame
                     if 'instances' in output_dict:
                         instances = output_dict['instances']
-                        # Extract data from Instances object and move to CPU immediately
                         if hasattr(instances, 'scores') and len(instances) > 0:
+                            # Move to CPU immediately to free GPU memory
                             scores = instances.scores.cpu().numpy() if isinstance(instances.scores, torch.Tensor) else instances.scores
                             labels = instances.pred_classes.cpu().numpy() if isinstance(instances.pred_classes, torch.Tensor) else instances.pred_classes
-                            masks = instances.pred_masks.cpu().numpy() if isinstance(instances.pred_masks, torch.Tensor) else instances.pred_masks
                             
                             # Extract boxes
                             if hasattr(instances.pred_boxes, 'tensor'):
@@ -242,217 +249,80 @@ def main(args):
                                 boxes_xywh[:, 3] = boxes[:, 3] - boxes[:, 1]  # height
                                 boxes = boxes_xywh
                             
-                            # For image tasks, each instance is independent per frame
-                            # We need to organize by instance across frames for tracking
-                            # But for now, just store per frame and process later
+                            # Draw detections on this frame
                             num_instances = len(scores)
                             for i in range(num_instances):
-                                converted_outputs['pred_scores'].append(float(scores[i]))
-                                converted_outputs['pred_labels'].append(int(labels[i]))
-                                # Masks: [H, W] -> [1, H, W] to match expected format
-                                if len(masks.shape) == 2:
-                                    converted_outputs['pred_masks'].append(masks[i:i+1])
+                                score = float(scores[i])
+                                label = int(labels[i])
+                                
+                                # Filter by confidence threshold
+                                if score < confidence_threshold:
+                                    continue
+                                
+                                total_detections += 1
+                                
+                                # Get box for this instance
+                                if len(boxes.shape) == 2:
+                                    box = boxes[i]
                                 else:
-                                    converted_outputs['pred_masks'].append(masks[i])
-                                # Boxes: [4] -> [1, 4] to match expected format  
-                                if len(boxes.shape) == 1:
-                                    converted_outputs['pred_boxes'].append(boxes[i:i+1] if i < len(boxes) else boxes)
-                                else:
-                                    converted_outputs['pred_boxes'].append(boxes[i])
+                                    box = boxes[i] if i < len(boxes) else None
+                                
+                                # Draw bounding box if available
+                                if box is not None and len(box) == 4:
+                                    # box is in xywh format (x, y, width, height), convert to xyxy
+                                    x, y, w, h = box
+                                    x1, y1 = int(x), int(y)
+                                    x2, y2 = int(x + w), int(y + h)
+                                    
+                                    # Clip to image bounds
+                                    x1 = max(0, min(x1, ori_width - 1))
+                                    y1 = max(0, min(y1, ori_height - 1))
+                                    x2 = max(0, min(x2, ori_width - 1))
+                                    y2 = max(0, min(y2, ori_height - 1))
+                                    
+                                    # Draw box
+                                    color = (0, 255, 0)  # Green
+                                    cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+                                    
+                                    # Draw label
+                                    if batch_name_list is not None and label < len(batch_name_list):
+                                        label_name = batch_name_list[label]
+                                    elif label in OVIS_LABEL_TO_NAME:
+                                        label_name = OVIS_LABEL_TO_NAME[label]
+                                    else:
+                                        label_name = f"Class_{label}"
+                                    label_text = f"{label_name}: {score:.2f}"
+                                    
+                                    # Get text size
+                                    font = cv2.FONT_HERSHEY_SIMPLEX
+                                    font_scale = 0.6
+                                    thickness = 2
+                                    (text_width, text_height), baseline = cv2.getTextSize(label_text, font, font_scale, thickness)
+                                    
+                                    # Draw label background
+                                    cv2.rectangle(img, (x1, y1 - text_height - baseline - 5), 
+                                                (x1 + text_width, y1), color, -1)
+                                    
+                                    # Draw label text
+                                    cv2.putText(img, label_text, (x1, y1 - baseline - 2), 
+                                               font, font_scale, (0, 0, 0), thickness)
+                    
+                    # Write frame to video immediately
+                    if out is not None:
+                        img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                        out.write(img_bgr)
             
-            all_outputs.append(converted_outputs)
-        
-        # Clear GPU cache after each batch
-        del outputs
-        torch.cuda.empty_cache()
+            # Free memory immediately after processing batch
+            del outputs
+            torch.cuda.empty_cache()
     
     print("All batches processed!")
+    print(f"Found {total_detections} detections total")
     
-    # Process outputs from each batch
-    # Each batch output is a dict with:
-    # - pred_scores: list of floats (one per instance)
-    # - pred_labels: list of ints (one per instance)
-    # - pred_masks: list of tensors, each [num_frames_in_batch, H, W]
-    # - pred_boxes: list of tensors, each [num_frames_in_batch, 4] in xywh format
-    
-    if len(all_outputs) == 0:
-        print("No outputs generated!")
-        return
-    
-    all_frame_detections = {}  # frame_idx -> list of detections
-    
-    frame_offset = 0
-    for batch_idx, batch_outputs in enumerate(all_outputs):
-        if not isinstance(batch_outputs, dict):
-            frame_offset += batch_size
-            continue
-            
-        batch_scores = batch_outputs.get('pred_scores', [])
-        batch_labels = batch_outputs.get('pred_labels', [])
-        batch_masks = batch_outputs.get('pred_masks', [])
-        batch_boxes = batch_outputs.get('pred_boxes', [])
-        
-        if len(batch_scores) == 0:
-            frame_offset += batch_size
-            continue
-        
-        # Get number of frames in this batch from first mask
-        num_frames_in_batch = batch_size
-        if len(batch_masks) > 0 and isinstance(batch_masks[0], torch.Tensor):
-            num_frames_in_batch = batch_masks[0].shape[0]
-        
-        # Process each instance
-        for inst_idx in range(len(batch_scores)):
-            score = batch_scores[inst_idx]
-            label = batch_labels[inst_idx]
-            
-            # Filter by score threshold
-            confidence_threshold = getattr(args, 'confidence_threshold', 0.5)
-            if score < confidence_threshold:
-                continue
-            
-            # Get mask and box for this instance
-            mask = None
-            box = None
-            
-            if inst_idx < len(batch_masks):
-                mask_tensor = batch_masks[inst_idx]
-                if isinstance(mask_tensor, torch.Tensor):
-                    mask = mask_tensor.cpu().numpy()
-                else:
-                    mask = mask_tensor
-                    
-            if inst_idx < len(batch_boxes):
-                box_tensor = batch_boxes[inst_idx]
-                if isinstance(box_tensor, torch.Tensor):
-                    box = box_tensor.cpu().numpy()
-                else:
-                    box = box_tensor
-            
-            # Process each frame in this batch
-            if mask is not None and len(mask.shape) == 3:  # [num_frames, H, W]
-                for frame_in_batch in range(min(num_frames_in_batch, mask.shape[0])):
-                    frame_idx = frame_offset + frame_in_batch
-                    if frame_idx >= len(frames):
-                        break
-                    
-                    frame_mask = mask[frame_in_batch]
-                    frame_box = None
-                    if box is not None:
-                        if len(box.shape) == 2:  # [num_frames, 4]
-                            frame_box = box[frame_in_batch]
-                        elif len(box.shape) == 1 and len(box) == 4:  # [4]
-                            frame_box = box
-                    
-                    if frame_idx not in all_frame_detections:
-                        all_frame_detections[frame_idx] = []
-                    
-                    all_frame_detections[frame_idx].append({
-                        'score': score,
-                        'label': label,
-                        'mask': frame_mask,
-                        'box': frame_box
-                    })
-        
-        frame_offset += num_frames_in_batch
-    
-    total_detections = sum(len(dets) for dets in all_frame_detections.values())
-    print(f"Found {total_detections} detections across {len(all_frame_detections)} frames")
-        
-    # Save output frames
-    output_dir = getattr(args, 'output_dir', './output_frames')
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # saved_count = 0
-    # for frame_idx in all_frame_detections:
-    #     if len(all_frame_detections[frame_idx]) > 0:
-    #         img = frames[frame_idx].copy()
-    #         # Apply mask overlay
-    #         for det in all_frame_detections[frame_idx]:
-    #             mask = det['mask']
-    #             if mask.sum() > 0:
-    #                 img[~mask] = img[~mask] * 0.5  # Dim non-masked areas
-    #         output_path = os.path.join(output_dir, f'{frame_idx}.png')
-    #         Image.fromarray(img).save(output_path)
-    #         saved_count += 1
-    
-    # print(f"Saved {saved_count} masked frames to {output_dir}")
-    
-    # Create output video if requested
-    if hasattr(args, 'output_video') and args.output_video:
-        print(f"Creating output video: {args.output_video}")
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(args.output_video, fourcc, 30.0, (ori_width, ori_height))
-        
-        # Note: OVIS_CATEGORIES might not match the actual label indices from the model
-        # The model uses its own label encoding for the OVIS task
-        
-        for frame_idx in range(len(frames)):
-            img = frames[frame_idx].copy()
-            
-            # Draw detections for this frame
-            if frame_idx in all_frame_detections:
-                for det in all_frame_detections[frame_idx]:
-                    score = det['score']
-                    label = det['label']
-                    mask = det['mask']
-                    box = det['box']
-                    
-                    # Draw bounding box if available
-                    if box is not None and len(box) == 4:
-                        # box is in xywh format (x, y, width, height), convert to xyxy
-                        x, y, w, h = box
-                        x1, y1 = int(x), int(y)
-                        x2, y2 = int(x + w), int(y + h)
-                        
-                        # Clip to image bounds
-                        x1 = max(0, min(x1, ori_width - 1))
-                        y1 = max(0, min(y1, ori_height - 1))
-                        x2 = max(0, min(x2, ori_width - 1))
-                        y2 = max(0, min(y2, ori_height - 1))
-                        
-                        # Draw box
-                        color = (0, 255, 0)  # Green
-                        cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
-                        
-                        # Draw label
-                        # Map label index to category name
-                        if batch_name_list is not None and isinstance(label, (int, np.integer)) and label < len(batch_name_list):
-                            # For open-world detection, use batch_name_list
-                            label_name = batch_name_list[int(label)]
-                        elif isinstance(label, (int, np.integer)) and label in OVIS_LABEL_TO_NAME:
-                            # For OVIS task, use OVIS categories
-                            label_name = OVIS_LABEL_TO_NAME[int(label)]
-                        else:
-                            label_name = f"Class_{label}"  # Fallback if label not in mapping
-                        label_text = f"{label_name}: {score:.2f}"
-                        
-                        # Get text size
-                        font = cv2.FONT_HERSHEY_SIMPLEX
-                        font_scale = 0.6
-                        thickness = 2
-                        (text_width, text_height), baseline = cv2.getTextSize(label_text, font, font_scale, thickness)
-                        
-                        # Draw label background
-                        cv2.rectangle(img, (x1, y1 - text_height - baseline - 5), 
-                                    (x1 + text_width, y1), color, -1)
-                        
-                        # Draw label text
-                        cv2.putText(img, label_text, (x1, y1 - baseline - 2), 
-                                   font, font_scale, (0, 0, 0), thickness)
-                    
-                    # Draw mask overlay (optional, can be enabled)
-                    # if mask.sum() > 0:
-                    #     mask_overlay = img.copy()
-                    #     mask_overlay[mask > 0] = [0, 255, 0]  # Green overlay
-                    #     img = cv2.addWeighted(img, 0.7, mask_overlay, 0.3, 0)
-            
-            # Convert RGB to BGR for OpenCV
-            img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-            out.write(img_bgr)
-        
+    # Close video writer if it was opened
+    if out is not None:
         out.release()
-        print(f"Output video saved to: {args.output_video}")
+        print(f"Output video saved to: {output_video_path}")
 
 
 
