@@ -149,8 +149,18 @@ def main(args):
         
         ori_height, ori_width = frames[0].shape[:2]
 
-    prompt = [cat['name'] for cat in OVIS_CATEGORIES]
-    # prompt = ['Vehical']
+    # Get custom classes from command line or use default
+    if hasattr(args, 'classes') and args.classes:
+        # Parse comma-separated class names
+        custom_classes = [cls.strip() for cls in args.classes.split(',')]
+        print(f"Using custom classes: {custom_classes}")
+        batch_name_list = custom_classes
+        task = 'coco_clip'  # Use coco_clip task for open-world detection
+    else:
+        # Use OVIS categories as before
+        prompt = [cat['name'] for cat in OVIS_CATEGORIES]
+        batch_name_list = None  # Will use default OVIS categories
+        task = 'ovis'
     
     min_size = cfg.INPUT.MIN_SIZE_TEST
     max_size = cfg.INPUT.MAX_SIZE_TEST
@@ -159,7 +169,8 @@ def main(args):
     augumentations = T.AugmentationList(aug_list)
 
     # Process frames in batches to avoid OOM
-    batch_size = getattr(args, 'batch_size', 10)  # Process 10 frames at a time
+    # Note: For open-world detection, use batch_size=1 to avoid CUDA OOM errors
+    batch_size = getattr(args, 'batch_size', 10)  # Process N frames at a time
     model.eval()
     
     all_outputs = []
@@ -186,16 +197,73 @@ def main(args):
             'height': ori_height,
             'width': ori_width,
             'image': img_list,
-            'task': 'ovis', # TODO: for debug, current use task as 'ovis'
+            'task': task,  # Use 'coco_clip' for open-world or 'ovis' for OVIS categories
             'file_names': batch_file_names,
             'prompt': None
         }]
+        
+        # Add batch_name_list for open-world detection
+        if batch_name_list is not None:
+            inputs[0]['batch_name_list'] = batch_name_list
 
         with torch.no_grad():
             outputs = model(inputs)
-            all_outputs.append(outputs)
+            # Convert outputs to expected format
+            # For image tasks (coco_clip), model returns list of dicts with "instances" key
+            # Each dict corresponds to one frame in the batch
+            converted_outputs = {
+                'pred_scores': [],
+                'pred_labels': [],
+                'pred_masks': [],
+                'pred_boxes': []
+            }
+            
+            if isinstance(outputs, list):
+                # Process each frame's instances
+                for frame_idx, output_dict in enumerate(outputs):
+                    if 'instances' in output_dict:
+                        instances = output_dict['instances']
+                        # Extract data from Instances object and move to CPU immediately
+                        if hasattr(instances, 'scores') and len(instances) > 0:
+                            scores = instances.scores.cpu().numpy() if isinstance(instances.scores, torch.Tensor) else instances.scores
+                            labels = instances.pred_classes.cpu().numpy() if isinstance(instances.pred_classes, torch.Tensor) else instances.pred_classes
+                            masks = instances.pred_masks.cpu().numpy() if isinstance(instances.pred_masks, torch.Tensor) else instances.pred_masks
+                            
+                            # Extract boxes
+                            if hasattr(instances.pred_boxes, 'tensor'):
+                                boxes = instances.pred_boxes.tensor.cpu().numpy()
+                            else:
+                                boxes = instances.pred_boxes.cpu().numpy()
+                            
+                            # Convert boxes from xyxy to xywh format
+                            if len(boxes.shape) == 2 and boxes.shape[1] == 4:
+                                boxes_xywh = boxes.copy()
+                                boxes_xywh[:, 2] = boxes[:, 2] - boxes[:, 0]  # width
+                                boxes_xywh[:, 3] = boxes[:, 3] - boxes[:, 1]  # height
+                                boxes = boxes_xywh
+                            
+                            # For image tasks, each instance is independent per frame
+                            # We need to organize by instance across frames for tracking
+                            # But for now, just store per frame and process later
+                            num_instances = len(scores)
+                            for i in range(num_instances):
+                                converted_outputs['pred_scores'].append(float(scores[i]))
+                                converted_outputs['pred_labels'].append(int(labels[i]))
+                                # Masks: [H, W] -> [1, H, W] to match expected format
+                                if len(masks.shape) == 2:
+                                    converted_outputs['pred_masks'].append(masks[i:i+1])
+                                else:
+                                    converted_outputs['pred_masks'].append(masks[i])
+                                # Boxes: [4] -> [1, 4] to match expected format  
+                                if len(boxes.shape) == 1:
+                                    converted_outputs['pred_boxes'].append(boxes[i:i+1] if i < len(boxes) else boxes)
+                                else:
+                                    converted_outputs['pred_boxes'].append(boxes[i])
+            
+            all_outputs.append(converted_outputs)
         
         # Clear GPU cache after each batch
+        del outputs
         torch.cuda.empty_cache()
     
     print("All batches processed!")
@@ -348,9 +416,12 @@ def main(args):
                         cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
                         
                         # Draw label
-                        # Map label index to category name using OVIS categories
-                        # Model outputs indices 0-24 for OVIS task (25 categories)
-                        if isinstance(label, (int, np.integer)) and label in OVIS_LABEL_TO_NAME:
+                        # Map label index to category name
+                        if batch_name_list is not None and isinstance(label, (int, np.integer)) and label < len(batch_name_list):
+                            # For open-world detection, use batch_name_list
+                            label_name = batch_name_list[int(label)]
+                        elif isinstance(label, (int, np.integer)) and label in OVIS_LABEL_TO_NAME:
+                            # For OVIS task, use OVIS categories
                             label_name = OVIS_LABEL_TO_NAME[int(label)]
                         else:
                             label_name = f"Class_{label}"  # Fallback if label not in mapping
@@ -396,6 +467,7 @@ if __name__ == "__main__":
     parser.add_argument('--skip_frames', type=int, default=1, help='process every Nth frame (1=all frames)')
     parser.add_argument('--batch_size', type=int, default=10, help='number of frames to process per batch (default: 10)')
     parser.add_argument('--confidence_threshold', type=float, default=0.5, help='minimum confidence score threshold for detections (default: 0.5)')
+    parser.add_argument('--classes', type=str, default=None, help='comma-separated list of custom class names for open-world detection (e.g., "pizza,plate,hand,car,person"). If not provided, uses OVIS categories.')
     
     args = parser.parse_args()
     print("Command Line Args:", args)
