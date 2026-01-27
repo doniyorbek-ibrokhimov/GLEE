@@ -11,10 +11,10 @@
 source glee_venv/bin/activate
 
 # Configuration
-INPUT_VIDEO="/home/bob/Development/Ego3DT/raw_videos/room.mp4"
+INPUT_VIDEO="/home/bob/Development/Ego3DT/raw_videos/short_sample.qt"
 MODEL_PATH="/home/bob/Downloads/GLEE_Lite_joint.pth"
 CONFIG="projects/GLEE/configs/images/Lite/Stage2_joint_training_CLIPteacher_R50.yaml"
-OUTPUT_VIDEO="../raw_videos/room_output.mp4"
+OUTPUT_VIDEO="../raw_videos/room_short_output.mp4"
 
 # Open-world detection parameters
 # Specify any classes you want to detect (comma-separated, no spaces after commas)

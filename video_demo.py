@@ -12,50 +12,6 @@ from detectron2.data import detection_utils as utils
 from detectron2.data import transforms as T
 from PIL import Image
 
-# Actual OVIS dataset categories (25 categories)
-# Model outputs label indices 0-24 corresponding to these categories
-ACTUAL_OVIS_CATEGORIES = [
-    {"color": [220, 20, 60], "isthing": 1, "id": 1, "name": "Person"},
-    {"color": [0, 82, 0], "isthing": 1, "id": 2, "name": "Bird"},
-    {"color": [119, 11, 32], "isthing": 1, "id": 3, "name": "Cat"},
-    {"color": [165, 42, 42], "isthing": 1, "id": 4, "name": "Dog"},
-    {"color": [134, 134, 103], "isthing": 1, "id": 5, "name": "Horse"},
-    {"color": [0, 0, 142], "isthing": 1, "id": 6, "name": "Sheep"},
-    {"color": [255, 109, 65], "isthing": 1, "id": 7, "name": "Cow"},
-    {"color": [0, 226, 252], "isthing": 1, "id": 8, "name": "Elephant"},
-    {"color": [5, 121, 0], "isthing": 1, "id": 9, "name": "Bear"},
-    {"color": [0, 60, 100], "isthing": 1, "id": 10, "name": "Zebra"},
-    {"color": [250, 170, 30], "isthing": 1, "id": 11, "name": "Giraffe"},
-    {"color": [100, 170, 30], "isthing": 1, "id": 12, "name": "Poultry"},
-    {"color": [179, 0, 194], "isthing": 1, "id": 13, "name": "Giant_panda"},
-    {"color": [255, 77, 255], "isthing": 1, "id": 14, "name": "Lizard"},
-    {"color": [120, 166, 157], "isthing": 1, "id": 15, "name": "Parrot"},
-    {"color": [73, 77, 174], "isthing": 1, "id": 16, "name": "Monkey"},
-    {"color": [0, 80, 100], "isthing": 1, "id": 17, "name": "Rabbit"},
-    {"color": [182, 182, 255], "isthing": 1, "id": 18, "name": "Tiger"},
-    {"color": [0, 143, 149], "isthing": 1, "id": 19, "name": "Fish"},
-    {"color": [174, 57, 255], "isthing": 1, "id": 20, "name": "Turtle"},
-    {"color": [0, 0, 230], "isthing": 1, "id": 21, "name": "Bicycle"},
-    {"color": [72, 0, 118], "isthing": 1, "id": 22, "name": "Motorcycle"},
-    {"color": [255, 179, 240], "isthing": 1, "id": 23, "name": "Airplane"},
-    {"color": [0, 125, 92], "isthing": 1, "id": 24, "name": "Boat"},
-    {"color": [209, 0, 151], "isthing": 1, "id": 25, "name": "Vehical"},
-]
-
-# Custom categories for display (user-defined)
-OVIS_CATEGORIES = [
-    {"color": [220, 20, 60], "isthing": 1, "id": 1, "name": "pizza"},
-    {"color": [0, 82, 0], "isthing": 1, "id": 2, "name": "plate"},
-    {"color": [119, 11, 32], "isthing": 1, "id": 3, "name": "hand"},
-]
-
-# Create mapping from label index (0-24) to category name
-# Model outputs indices 0-24 for OVIS task (25 categories)
-# OVIS categories have ids 1-25, so index = id - 1
-OVIS_LABEL_TO_NAME = {}
-for cat in ACTUAL_OVIS_CATEGORIES:
-    label_idx = cat['id'] - 1  # Convert id (1-25) to index (0-24)
-    OVIS_LABEL_TO_NAME[label_idx] = cat['name']
 
 def setup(args):
     """
@@ -149,18 +105,12 @@ def main(args):
         
         ori_height, ori_width = frames[0].shape[:2]
 
-    # Get custom classes from command line or use default
-    if hasattr(args, 'classes') and args.classes:
-        # Parse comma-separated class names
-        custom_classes = [cls.strip() for cls in args.classes.split(',')]
-        print(f"Using custom classes: {custom_classes}")
-        batch_name_list = custom_classes
-        task = 'coco_clip'  # Use coco_clip task for open-world detection
-    else:
-        # Use OVIS categories as before
-        prompt = [cat['name'] for cat in OVIS_CATEGORIES]
-        batch_name_list = None  # Will use default OVIS categories
-        task = 'ovis'
+    # Get custom classes from command line (required for open-world mode)
+    # Parse comma-separated class names
+    custom_classes = [cls.strip() for cls in args.classes.split(',')]
+    print(f"Using custom classes: {custom_classes}")
+    batch_name_list = custom_classes
+    task = 'coco_clip'  # Use coco_clip task for open-world detection
     
     min_size = cfg.INPUT.MIN_SIZE_TEST
     max_size = cfg.INPUT.MAX_SIZE_TEST
@@ -205,7 +155,7 @@ def main(args):
             'height': ori_height,
             'width': ori_width,
             'image': img_list,
-            'task': task,  # Use 'coco_clip' for open-world or 'ovis' for OVIS categories
+            'task': task,  # Use 'coco_clip' for open-world detection
             'file_names': batch_file_names,
             'prompt': None
         }]
@@ -287,8 +237,6 @@ def main(args):
                                     # Draw label
                                     if batch_name_list is not None and label < len(batch_name_list):
                                         label_name = batch_name_list[label]
-                                    elif label in OVIS_LABEL_TO_NAME:
-                                        label_name = OVIS_LABEL_TO_NAME[label]
                                     else:
                                         label_name = f"Class_{label}"
                                     label_text = f"{label_name}: {score:.2f}"
@@ -337,7 +285,7 @@ if __name__ == "__main__":
     parser.add_argument('--skip_frames', type=int, default=1, help='process every Nth frame (1=all frames)')
     parser.add_argument('--batch_size', type=int, default=10, help='number of frames to process per batch (default: 10)')
     parser.add_argument('--confidence_threshold', type=float, default=0.5, help='minimum confidence score threshold for detections (default: 0.5)')
-    parser.add_argument('--classes', type=str, default=None, help='comma-separated list of custom class names for open-world detection (e.g., "pizza,plate,hand,car,person"). If not provided, uses OVIS categories.')
+    parser.add_argument('--classes', type=str, required=True, help='comma-separated list of custom class names for open-world detection (e.g., "pizza,plate,hand,car,person")')
     
     args = parser.parse_args()
     print("Command Line Args:", args)
