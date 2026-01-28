@@ -228,67 +228,68 @@ def main(args):
                                 boxes_xywh[:, 3] = boxes_xyxy[:, 3] - boxes_xyxy[:, 1]  # height
                             else:
                                 boxes_xywh = boxes_xyxy
-                            
-                            # Generate SAM masks for detected objects
-                            masks = None
-                            mask_scores = None
-                            if len(boxes_xyxy) > 0:
-                                # Filter boxes by confidence before SAM (efficiency)
-                                valid_indices = scores >= confidence_threshold
-                                valid_boxes = boxes_xyxy[valid_indices].copy()
-                                
-                                if len(valid_boxes) > 0:
-                                    # Clip boxes to image bounds before SAM
-                                    h, w = img.shape[:2]
-                                    valid_boxes[:, 0] = np.clip(valid_boxes[:, 0], 0, w - 1)  # x1
-                                    valid_boxes[:, 1] = np.clip(valid_boxes[:, 1], 0, h - 1)  # y1
-                                    valid_boxes[:, 2] = np.clip(valid_boxes[:, 2], 0, w - 1)  # x2
-                                    valid_boxes[:, 3] = np.clip(valid_boxes[:, 3], 0, h - 1)  # y2
-                                    
-                                    # Set image once per frame
-                                    sam_predictor.set_image(img, image_format="RGB")
-                                    
-                                    # Process each box individually (SAM's predict expects single box)
-                                    masks_list = []
-                                    mask_scores_list = []
-                                    for box in valid_boxes:
-                                        mask, mask_score, _ = sam_predictor.predict(
-                                            box=box,
-                                            multimask_output=False  # Single best mask per box
-                                        )
-                                        masks_list.append(mask[0])  # Extract single mask from output
-                                        mask_scores_list.append(mask_score[0])  # Extract single score
-                                    
-                                    # Convert to numpy arrays
-                                    masks_all = np.array(masks_list)
-                                    mask_scores_all = np.array(mask_scores_list)
-                                    
-                                    # Create full mask array aligned with all detections
-                                    masks = np.zeros((len(scores), img.shape[0], img.shape[1]), dtype=bool)
-                                    mask_scores = np.zeros(len(scores))
-                                    masks[valid_indices] = masks_all
-                                    mask_scores[valid_indices] = mask_scores_all
+
+                            # Generate SAM masks for detected objects (if enabled)
+                            if getattr(args, 'enable_masking', True):
+                                masks = None
+                                mask_scores = None
+                                if len(boxes_xyxy) > 0:
+                                    # Filter boxes by confidence before SAM (efficiency)
+                                    valid_indices = scores >= confidence_threshold
+                                    valid_boxes = boxes_xyxy[valid_indices].copy()
+
+                                    if len(valid_boxes) > 0:
+                                        # Clip boxes to image bounds before SAM
+                                        h, w = img.shape[:2]
+                                        valid_boxes[:, 0] = np.clip(valid_boxes[:, 0], 0, w - 1)  # x1
+                                        valid_boxes[:, 1] = np.clip(valid_boxes[:, 1], 0, h - 1)  # y1
+                                        valid_boxes[:, 2] = np.clip(valid_boxes[:, 2], 0, w - 1)  # x2
+                                        valid_boxes[:, 3] = np.clip(valid_boxes[:, 3], 0, h - 1)  # y2
+
+                                        # Set image once per frame
+                                        sam_predictor.set_image(img, image_format="RGB")
+
+                                        # Process each box individually (SAM's predict expects single box)
+                                        masks_list = []
+                                        mask_scores_list = []
+                                        for box in valid_boxes:
+                                            mask, mask_score, _ = sam_predictor.predict(
+                                                box=box,
+                                                multimask_output=False  # Single best mask per box
+                                            )
+                                            masks_list.append(mask[0])  # Extract single mask from output
+                                            mask_scores_list.append(mask_score[0])  # Extract single score
+
+                                        # Convert to numpy arrays
+                                        masks_all = np.array(masks_list)
+                                        mask_scores_all = np.array(mask_scores_list)
+
+                                        # Create full mask array aligned with all detections
+                                        masks = np.zeros((len(scores), img.shape[0], img.shape[1]), dtype=bool)
+                                        mask_scores = np.zeros(len(scores))
+                                        masks[valid_indices] = masks_all
+                                        mask_scores[valid_indices] = mask_scores_all
+                                    else:
+                                        masks = np.zeros((len(scores), img.shape[0], img.shape[1]), dtype=bool)
+                                        mask_scores = np.zeros(len(scores))
                                 else:
-                                    masks = np.zeros((len(scores), img.shape[0], img.shape[1]), dtype=bool)
-                                    mask_scores = np.zeros(len(scores))
-                            else:
-                                masks = np.array([])
-                                mask_scores = np.array([])
-                            
-                            # Draw mask overlays first (so boxes appear on top)
-                            if masks is not None and len(masks) > 0:
-                                for i in range(len(scores)):
-                                    if scores[i] >= confidence_threshold and i < len(masks):
-                                        mask = masks[i]
-                                        if mask.any():  # Check if mask has any True pixels
-                                            # Create colored overlay
-                                            color_mask = np.zeros_like(img)
-                                            # Use different colors for different objects (optional)
-                                            color = (0, 255, 0)  # Green default
-                                            color_mask[mask] = color
-                                            # Blend with original image (30% opacity)
-                                            img = cv2.addWeighted(img, 1.0, color_mask, 0.3, 0)
-                            
+                                    masks = np.array([])
+                                    mask_scores = np.array([])
+
+                                # Draw mask overlays first (so boxes appear on top)
+                                if masks is not None and len(masks) > 0:
+                                    for i in range(len(scores)):
+                                        if scores[i] >= confidence_threshold and i < len(masks):
+                                            mask = masks[i]
+                                            if mask.any():  # Check if mask has any True pixels
+                                                # Create colored overlay
+                                                color_mask = np.zeros_like(img)
+                                                # Use different colors for different objects (optional)
+                                                color = (0, 255, 0)  # Green default
+                                                color_mask[mask] = color
+                                                # Blend with original image (30% opacity)
+                                                img = cv2.addWeighted(img, 1.0, color_mask, 0.3, 0)
+
                             # Draw detections on this frame
                             num_instances = len(scores)
                             for i in range(num_instances):
@@ -377,7 +378,9 @@ if __name__ == "__main__":
     parser.add_argument('--confidence_threshold', type=float, default=0.5, help='minimum confidence score threshold for detections (default: 0.5)')
     parser.add_argument('--classes', type=str, required=True, help='comma-separated list of custom class names for open-world detection (e.g., "pizza,plate,hand,car,person")')
     parser.add_argument('--sam_checkpoint', type=str, default=None, help='path to SAM checkpoint (default: auto-detect)')
-    
+    parser.add_argument('--enable_masking', action='store_true', default=True, help='enable SAM segmentation masking (default: enabled)')
+    parser.add_argument('--disable_masking', dest='enable_masking', action='store_false', help='disable SAM segmentation masking to reduce GPU memory usage')
+
     args = parser.parse_args()
     print("Command Line Args:", args)
     main(args)

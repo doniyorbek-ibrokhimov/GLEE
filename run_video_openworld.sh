@@ -11,10 +11,10 @@
 source glee_venv/bin/activate
 
 # Configuration
-INPUT_VIDEO="/home/bob/Development/Ego3DT/raw_videos/short_sample.qt"
+INPUT_VIDEO="/home/bob/Development/Ego3DT/raw_videos/room_short_more_objects.qt"
 MODEL_PATH="/home/bob/Downloads/GLEE_Lite_joint.pth"
 CONFIG="projects/GLEE/configs/images/Lite/Stage2_joint_training_CLIPteacher_R50.yaml"
-OUTPUT_VIDEO="../raw_videos/room_short_output.mp4"
+OUTPUT_VIDEO="../raw_videos/room_short_more_objects_output_segmented.mp4"
 
 # Open-world detection parameters
 # Specify any classes you want to detect (comma-separated, no spaces after commas)
@@ -22,14 +22,16 @@ OUTPUT_VIDEO="../raw_videos/room_short_output.mp4"
 #   "pizza,plate,hand" - detect pizza, plate, and hand
 #   "car,person,bicycle" - detect vehicles and people
 #   "laptop,book,phone" - detect electronics and objects
-# CUSTOM_CLASSES="pizza,plate,hand,car,laptop,book,phone"
-CUSTOM_CLASSES="object"
+CUSTOM_CLASSES="headphone,lamp,monitor,watch,object,bottle,heater,hand,tablet,mouse,laptop,book,phone"
+# CUSTOM_CLASSES="object"
 
 # Processing options
 SKIP_FRAMES=1  # Process every Nth frame (1 = all frames)
 MAX_FRAMES=0   # Limit to N frames (0 = process all frames)
 BATCH_SIZE=1   # Number of frames to process per batch (reduced to avoid OOM)
-CONFIDENCE_THRESHOLD=0.6  # Minimum confidence score for detections
+CONFIDENCE_THRESHOLD=0.3  # Minimum confidence score for detections
+# SAM Masking: --disable_masking flag is used to reduce GPU memory usage
+# Remove --disable_masking to enable segmentation masks (uses more GPU memory)
 
 # Build command
 CMD="python3 video_demo.py \
@@ -40,7 +42,8 @@ CMD="python3 video_demo.py \
     --skip_frames $SKIP_FRAMES \
     --batch_size $BATCH_SIZE \
     --confidence_threshold $CONFIDENCE_THRESHOLD \
-    --classes \"$CUSTOM_CLASSES\""
+    --classes \"$CUSTOM_CLASSES\" \
+    --disable_masking"
 
 # Add max_frames if not 0
 if [ $MAX_FRAMES -gt 0 ]; then
