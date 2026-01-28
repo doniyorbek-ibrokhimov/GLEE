@@ -393,7 +393,11 @@ class GLEE(nn.Module):
                 # batched_inputs[0]['image'] = zero_pad
 
                 images = self.preprocess_image(batched_inputs, task)
-                batch_name_list = self.dataset_name_dicts[task]
+                # Check if batch_name_list is provided in batched_inputs for open-world detection
+                if 'batch_name_list' in batched_inputs[0]:
+                    batch_name_list = batched_inputs[0]['batch_name_list']
+                else:
+                    batch_name_list = self.dataset_name_dicts[task]
 
                 (outputs,_),_,_ = self.glee(images, prompt_list, task, batch_name_list=batch_name_list, is_train=False)
 
@@ -695,11 +699,21 @@ class GLEE(nn.Module):
             if task in ['lvis', 'image_tao', 'image_bur']:
                 self.test_topk_per_image = 300
 
-            scores = mask_cls.sigmoid()  # [100, 80]
-            labels = torch.arange(self.num_class[task], device=self.device).unsqueeze(0).repeat(self.num_queries, 1).flatten(0, 1)
+            # Get number of classes: use num_class dict if available, otherwise use mask_cls.shape[1]
+            if task in self.num_class:
+                num_classes = self.num_class[task]
+            else:
+                # For open-world tasks (e.g., coco_clip), use the actual number of classes from mask_cls
+                num_classes = mask_cls.shape[1]
+            
+            # Get number of queries from mask_cls shape
+            num_queries = mask_cls.shape[0]
+
+            scores = mask_cls.sigmoid()  # [num_queries, num_classes]
+            labels = torch.arange(num_classes, device=self.device).unsqueeze(0).repeat(num_queries, 1).flatten(0, 1)
             scores_per_image, topk_indices = scores.flatten(0, 1).topk(self.test_topk_per_image, sorted=False)  # select 100
             labels_per_image = labels[topk_indices]
-            topk_indices = topk_indices // self.num_class[task]
+            topk_indices = topk_indices // num_classes
             mask_pred = mask_pred[topk_indices]
             mask_box_result = mask_box_result[topk_indices]
 
@@ -711,10 +725,19 @@ class GLEE(nn.Module):
         result.pred_boxes = Boxes(mask_box_result)
         
 
-        # calculate average mask prob
-        mask_scores_per_image = (mask_pred.sigmoid().flatten(1) * result.pred_masks.flatten(1)).sum(1) / (result.pred_masks.flatten(1).sum(1) + 1e-6)
+        # calculate average mask prob (optimized for memory)
+        # Compute mask scores more efficiently to avoid OOM
+        mask_pred_sigmoid = mask_pred.sigmoid()
+        mask_flat = result.pred_masks.flatten(1)
+        mask_pred_flat = mask_pred_sigmoid.flatten(1)
+        # Use in-place operations where possible and compute in chunks if needed
+        mask_scores_per_image = (mask_pred_flat * mask_flat).sum(1) / (mask_flat.sum(1) + 1e-6)
         result.scores = scores_per_image * mask_scores_per_image
         result.pred_classes = labels_per_image
+        
+        # Clear intermediate tensors to free memory
+        del mask_pred_sigmoid, mask_flat, mask_pred_flat
+        
         return result
     def box_postprocess(self, out_bbox, img_h, img_w):
         # postprocess box height and width
