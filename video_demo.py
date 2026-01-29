@@ -3,6 +3,9 @@ import torch
 import numpy as np
 import cv2
 import argparse
+import json
+import pickle
+from pathlib import Path
 from detectron2.engine import DefaultTrainer, default_argument_parser, default_setup, launch
 from detectron2.config import get_cfg
 from detectron2.projects.glee import add_glee_config, build_detection_train_loader, build_detection_test_loader
@@ -159,7 +162,33 @@ def main(args):
         print(f"Initializing output video: {output_video_path}")
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         out = cv2.VideoWriter(output_video_path, fourcc, 30.0, (ori_width, ori_height))
-    
+
+    # Initialize data persistence for 3D reconstruction
+    save_detections = getattr(args, 'save_detections', False)
+    detection_save_dir = None
+    if save_detections:
+        # Create output directory structure
+        video_name = os.path.splitext(os.path.basename(args.input_video))[0] if hasattr(args, 'input_video') and args.input_video else 'image_sequence'
+        detections_output_dir = getattr(args, 'detections_output_dir', '../outputs/')
+        detection_save_dir = Path(detections_output_dir) / video_name
+
+        # Create subdirectories
+        (detection_save_dir / 'frames').mkdir(parents=True, exist_ok=True)
+        (detection_save_dir / 'rgb_frames').mkdir(parents=True, exist_ok=True)
+
+        print(f"Saving detections to: {detection_save_dir}")
+
+        # Prepare metadata
+        video_metadata = {
+            'video_path': args.input_video if hasattr(args, 'input_video') and args.input_video else 'image_directory',
+            'total_frames': len(frames),
+            'frame_width': ori_width,
+            'frame_height': ori_height,
+            'fps': 30.0,  # Default FPS
+            'classes': custom_classes,
+            'confidence_threshold': getattr(args, 'confidence_threshold', 0.5)
+        }
+
     confidence_threshold = getattr(args, 'confidence_threshold', 0.5)
     total_detections = 0
     
@@ -290,6 +319,55 @@ def main(args):
                                                 # Blend with original image (30% opacity)
                                                 img = cv2.addWeighted(img, 1.0, color_mask, 0.3, 0)
 
+                            # Save detection and mask data (if enabled)
+                            if save_detections and detection_save_dir is not None:
+                                # Save RGB frame (before drawing boxes)
+                                rgb_frame_path = detection_save_dir / 'rgb_frames' / f'frame_{frame_idx:06d}.jpg'
+                                Image.fromarray(batch_frames[frame_in_batch]).save(rgb_frame_path, quality=95)
+
+                                # Prepare frame metadata
+                                frame_objects = []
+                                for i in range(len(scores)):
+                                    if scores[i] >= confidence_threshold:
+                                        # Get class name
+                                        label_name = batch_name_list[labels[i]] if batch_name_list and labels[i] < len(batch_name_list) else f"Class_{labels[i]}"
+
+                                        # Calculate mask area
+                                        mask_area = int(np.sum(masks[i])) if masks is not None and i < len(masks) else 0
+
+                                        frame_objects.append({
+                                            'object_idx': i,
+                                            'class': label_name,
+                                            'confidence': float(scores[i]),
+                                            'bbox': boxes_xyxy[i].tolist(),  # Save in xyxy format
+                                            'mask_shape': [img.shape[0], img.shape[1]],
+                                            'mask_area': mask_area
+                                        })
+
+                                # Save frame metadata as JSON
+                                frame_metadata = {
+                                    'frame_id': frame_idx,
+                                    'timestamp': frame_idx / 30.0,  # Assuming 30 FPS
+                                    'objects': frame_objects
+                                }
+                                json_path = detection_save_dir / 'frames' / f'frame_{frame_idx:06d}.json'
+                                with open(json_path, 'w') as f:
+                                    json.dump(frame_metadata, f, indent=2)
+
+                                # Save masks as pickle
+                                if masks is not None and len(masks) > 0:
+                                    # Filter masks by confidence
+                                    valid_mask_indices = scores >= confidence_threshold
+                                    valid_masks = masks[valid_mask_indices]
+
+                                    mask_data = {
+                                        'masks': valid_masks,
+                                        'frame_id': frame_idx
+                                    }
+                                    pkl_path = detection_save_dir / 'frames' / f'frame_{frame_idx:06d}.pkl'
+                                    with open(pkl_path, 'wb') as f:
+                                        pickle.dump(mask_data, f)
+
                             # Draw detections on this frame
                             num_instances = len(scores)
                             for i in range(num_instances):
@@ -357,11 +435,21 @@ def main(args):
     
     print("All batches processed!")
     print(f"Found {total_detections} detections total")
-    
+
     # Close video writer if it was opened
     if out is not None:
         out.release()
         print(f"Output video saved to: {output_video_path}")
+
+    # Save video-level metadata
+    if save_detections and detection_save_dir is not None:
+        metadata_path = detection_save_dir / 'metadata.json'
+        with open(metadata_path, 'w') as f:
+            json.dump(video_metadata, f, indent=2)
+        print(f"Detection data saved to: {detection_save_dir}")
+        print(f"  - metadata.json: Video-level metadata")
+        print(f"  - frames/: {len(frames)} frame JSON + pickle files")
+        print(f"  - rgb_frames/: {len(frames)} RGB JPEG files")
 
 
 
@@ -380,6 +468,8 @@ if __name__ == "__main__":
     parser.add_argument('--sam_checkpoint', type=str, default=None, help='path to SAM checkpoint (default: auto-detect)')
     parser.add_argument('--enable_masking', action='store_true', default=True, help='enable SAM segmentation masking (default: enabled)')
     parser.add_argument('--disable_masking', dest='enable_masking', action='store_false', help='disable SAM segmentation masking to reduce GPU memory usage')
+    parser.add_argument('--save_detections', action='store_true', help='save detection and mask data for 3D reconstruction')
+    parser.add_argument('--detections_output_dir', type=str, default='../outputs/', help='directory to save detection outputs (default: ../outputs/)')
 
     args = parser.parse_args()
     print("Command Line Args:", args)

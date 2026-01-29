@@ -11,10 +11,10 @@
 source glee_venv/bin/activate
 
 # Configuration
-INPUT_VIDEO="../raw_videos/room_short_more_objects.qt"
+INPUT_VIDEO="../raw_videos/pizza_sale.mp4"
 MODEL_PATH="models/GLEE_Lite_joint.pth"
 CONFIG="projects/GLEE/configs/images/Lite/Stage2_joint_training_CLIPteacher_R50.yaml"
-OUTPUT_VIDEO="../output_videos/room_short_more_objects_output_segmented.mp4"
+OUTPUT_VIDEO="../output_videos/pizza_sale_output_segmented.mp4"
 
 # Open-world detection parameters
 # Specify any classes you want to detect (comma-separated, no spaces after commas)
@@ -22,16 +22,23 @@ OUTPUT_VIDEO="../output_videos/room_short_more_objects_output_segmented.mp4"
 #   "pizza,plate,hand" - detect pizza, plate, and hand
 #   "car,person,bicycle" - detect vehicles and people
 #   "laptop,book,phone" - detect electronics and objects
-CUSTOM_CLASSES="headphone,lamp,monitor,watch,object,bottle,heater,hand,tablet,mouse,laptop,book,phone"
+# CUSTOM_CLASSES="headphone,lamp,monitor,watch,object,bottle,heater,hand,tablet,mouse,laptop,book,phone"
 # CUSTOM_CLASSES="object"
+CUSTOM_CLASSES="pizza,plate,hand"
 
 # Processing options
 SKIP_FRAMES=1  # Process every Nth frame (1 = all frames)
 MAX_FRAMES=0   # Limit to N frames (0 = process all frames)
-BATCH_SIZE=4   # Number of frames to process per batch (reduced to avoid OOM)
+BATCH_SIZE=1   # Number of frames to process per batch (reduced to avoid OOM)
 CONFIDENCE_THRESHOLD=0.3  # Minimum confidence score for detections
+
 # SAM Masking: --disable_masking flag is used to reduce GPU memory usage
 # Remove --disable_masking to enable segmentation masks (uses more GPU memory)
+
+# Data persistence for 3D reconstruction (optional)
+# Set to "true" to save detection data for later 3D reconstruction with DUSt3R
+SAVE_DETECTIONS=true
+DETECTIONS_OUTPUT_DIR="../outputs/"  # Directory to save detection outputs
 
 # Build command
 CMD="python3 video_demo.py \
@@ -52,6 +59,11 @@ fi
 # Add num-gpus if needed (for detectron2)
 CMD="$CMD --num-gpus 1"
 
+# Add data persistence flags if enabled
+if [ "$SAVE_DETECTIONS" = "true" ]; then
+    CMD="$CMD --save_detections --detections_output_dir \"$DETECTIONS_OUTPUT_DIR\""
+fi
+
 # Print configuration
 echo "=========================================="
 echo "GLEE Open-World Video Detection"
@@ -67,6 +79,12 @@ fi
 if [ $SKIP_FRAMES -gt 1 ]; then
     echo "Skip Frames: $SKIP_FRAMES"
 fi
+if [ "$SAVE_DETECTIONS" = "true" ]; then
+    echo "Save Detections: ENABLED"
+    echo "Detections Output: $DETECTIONS_OUTPUT_DIR"
+else
+    echo "Save Detections: DISABLED"
+fi
 echo "=========================================="
 echo ""
 
@@ -75,6 +93,18 @@ eval $CMD
 
 echo ""
 echo "Done! Output video saved to: $OUTPUT_VIDEO"
+if [ "$SAVE_DETECTIONS" = "true" ]; then
+    VIDEO_NAME=$(basename "$INPUT_VIDEO" | sed 's/\.[^.]*$//')
+    echo "Detection data saved to: ${DETECTIONS_OUTPUT_DIR}${VIDEO_NAME}/"
+    echo ""
+    echo "Next step: Run 3D reconstruction"
+    echo "  source ../dust3r/activate_dust3r.sh"
+    echo "  python ../scripts/run_reconstruction.py \\"
+    echo "    --data_dir ${DETECTIONS_OUTPUT_DIR}${VIDEO_NAME}/ \\"
+    echo "    --output_dir ../outputs/reconstruction/"
+fi
 echo ""
 echo "To use different classes, edit CUSTOM_CLASSES in this script"
 echo "Example: CUSTOM_CLASSES=\"dog,cat,bird\""
+echo ""
+echo "To enable data saving for 3D reconstruction, set SAVE_DETECTIONS=true"
