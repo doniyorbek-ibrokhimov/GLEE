@@ -14,7 +14,7 @@ source glee_venv/bin/activate
 INPUT_VIDEO="../raw_videos/room_short_more_objects.qt"
 MODEL_PATH="models/GLEE_Lite_joint.pth"
 CONFIG="projects/GLEE/configs/images/Lite/Stage2_joint_training_CLIPteacher_R50.yaml"
-OUTPUT_VIDEO="../raw_videos/room_short_more_objects_output_segmented.mp4"
+OUTPUT_VIDEO="../output_videos/room_short_more_objects_output_segmented.mp4"
 
 # Open-world detection parameters
 # Specify any classes you want to detect (comma-separated, no spaces after commas)
