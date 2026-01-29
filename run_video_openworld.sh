@@ -29,7 +29,7 @@ CUSTOM_CLASSES="pizza,plate,hand"
 # Processing options
 SKIP_FRAMES=1  # Process every Nth frame (1 = all frames)
 MAX_FRAMES=0   # Limit to N frames (0 = process all frames)
-BATCH_SIZE=1   # Number of frames to process per batch (reduced to avoid OOM)
+BATCH_SIZE=4   # Number of frames to process per batch (reduced to avoid OOM)
 CONFIDENCE_THRESHOLD=0.3  # Minimum confidence score for detections
 
 # SAM Masking: --disable_masking flag is used to reduce GPU memory usage

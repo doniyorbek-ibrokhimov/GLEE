@@ -208,19 +208,24 @@ def main(args):
             image = aug_input.image
             image_shape = image.shape[:2]
             img_list.append(torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1))))
-        
-        inputs = [{
-            'height': ori_height,
-            'width': ori_width,
-            'image': img_list,
-            'task': task,  # Use 'coco_clip' for open-world detection
-            'file_names': batch_file_names,
-            'prompt': None
-        }]
-        
-        # Add batch_name_list for open-world detection
-        if batch_name_list is not None:
-            inputs[0]['batch_name_list'] = batch_name_list
+
+        # Create separate input dict for each frame (critical for proper batch processing)
+        # Previously: all frames in one dict caused GLEE to return only one output per batch
+        # Now: each frame gets its own dict, so GLEE returns one output per frame
+        inputs = []
+        for i, image_tensor in enumerate(img_list):
+            input_dict = {
+                'height': ori_height,
+                'width': ori_width,
+                'image': image_tensor,  # Single frame tensor, not list
+                'task': task,  # Use 'coco_clip' for open-world detection
+                'file_names': batch_file_names[i],
+                'prompt': None
+            }
+            # Add batch_name_list for open-world detection
+            if batch_name_list is not None:
+                input_dict['batch_name_list'] = batch_name_list
+            inputs.append(input_dict)
 
         with torch.no_grad():
             outputs = model(inputs)
