@@ -11,10 +11,10 @@
 source glee_venv/bin/activate
 
 # Configuration
-INPUT_VIDEO="../raw_videos/pizza_sale.mp4"
+INPUT_VIDEO="../raw_videos/room.mp4"
 MODEL_PATH="models/GLEE_Lite_joint.pth"
 CONFIG="projects/GLEE/configs/images/Lite/Stage2_joint_training_CLIPteacher_R50.yaml"
-OUTPUT_VIDEO="../output_videos/pizza_sale_output_segmented.mp4"
+OUTPUT_VIDEO="../output_videos/room_output_segmented.mp4"
 
 # Open-world detection parameters
 # Specify any classes you want to detect (comma-separated, no spaces after commas)
@@ -22,9 +22,9 @@ OUTPUT_VIDEO="../output_videos/pizza_sale_output_segmented.mp4"
 #   "pizza,plate,hand" - detect pizza, plate, and hand
 #   "car,person,bicycle" - detect vehicles and people
 #   "laptop,book,phone" - detect electronics and objects
-# CUSTOM_CLASSES="headphone,lamp,monitor,watch,object,bottle,heater,hand,tablet,mouse,laptop,book,phone"
+CUSTOM_CLASSES="headphone,lamp,monitor,watch,object,bottle,heater,hand,tablet,mouse,laptop,phone"
 # CUSTOM_CLASSES="object"
-CUSTOM_CLASSES="pizza,plate,hand"
+# CUSTOM_CLASSES="pizza,plate,hand"
 
 # Processing options
 SKIP_FRAMES=1  # Process every Nth frame (1 = all frames)
