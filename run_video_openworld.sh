@@ -12,8 +12,8 @@ source glee_venv/bin/activate
 
 # Configuration
 INPUT_VIDEO="../raw_videos/kitchen_clip_fixed.mp4"
-MODEL_PATH="models/GLEE_Lite_joint.pth"
-CONFIG="projects/GLEE/configs/images/Lite/Stage2_joint_training_CLIPteacher_R50.yaml"
+MODEL_PATH="weights/GLEE_Pro_joint.pth"
+CONFIG="projects/GLEE/configs/images/Pro/Stage2_joint_training_CLIPteacher_EVA02L.yaml"
 OUTPUT_VIDEO="../output_videos/kitchen_clip_fixed_output.mp4"
 
 # Dynamic class discovery via Gemini (set to false to use hardcoded classes below)
@@ -63,7 +63,7 @@ CMD="python3 video_demo.py \
     --skip_frames $SKIP_FRAMES \
     --batch_size $BATCH_SIZE \
     --confidence_threshold $CONFIDENCE_THRESHOLD \
-    --classes \"$CUSTOM_CLASSES\"
+    --classes \"$CUSTOM_CLASSES\" \
     --disable_masking"
 
 # Add max_frames if not 0
@@ -72,7 +72,9 @@ if [ $MAX_FRAMES -gt 0 ]; then
 fi
 
 # Add num-gpus if needed (for detectron2)
-CMD="$CMD --num-gpus 1"
+# Override DATASET_MAPPER_NAME to disable LSJ box postprocessing,
+# since video_demo.py uses ResizeShortestEdge (not LSJ padding)
+CMD="$CMD --num-gpus 1 INPUT.DATASET_MAPPER_NAME coco_instance_new_baselines"
 
 # Print configuration
 echo "=========================================="
