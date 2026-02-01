@@ -11,10 +11,10 @@
 source glee_venv/bin/activate
 
 # Configuration
-INPUT_VIDEO="../raw_videos/kitchen_clip_fixed.mp4"
+INPUT_VIDEO="../raw_videos/kitchen.mp4"
 MODEL_PATH="weights/GLEE_Pro_joint.pth"
 CONFIG="projects/GLEE/configs/images/Pro/Stage2_joint_training_CLIPteacher_EVA02L.yaml"
-OUTPUT_VIDEO="../output_videos/kitchen_clip_fixed_output.mp4"
+OUTPUT_VIDEO="../output_videos/kitchen_output.mp4"
 
 # Dynamic class discovery via Gemini (set to false to use hardcoded classes below)
 USE_DYNAMIC_CLASSES=false
@@ -23,7 +23,8 @@ FORCE_REDISCOVER=false
 
 # Hardcoded fallback classes (used when USE_DYNAMIC_CLASSES=false or discovery fails)
 # CUSTOM_CLASSES="headphone,lamp,monitor,watch,object,bottle,heater,hand,tablet,mouse,laptop,book,phone"
-CUSTOM_CLASSES="object"
+CUSTOM_CLASSES="small glass,cup,plate,sponge,bottle,lemon,chocolate box,tray,bowl,coffee bean,almond,container,glass,tissue box"
+# CUSTOM_CLASSES="object"
 
 
 if [ "$USE_DYNAMIC_CLASSES" = true ]; then
