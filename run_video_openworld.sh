@@ -14,15 +14,17 @@ source glee_venv/bin/activate
 INPUT_VIDEO="../raw_videos/kitchen_clip_fixed.mp4"
 MODEL_PATH="models/GLEE_Lite_joint.pth"
 CONFIG="projects/GLEE/configs/images/Lite/Stage2_joint_training_CLIPteacher_R50.yaml"
-OUTPUT_VIDEO="../output_videos/kitchen_clip_fixed_output_segmented.mp4"
+OUTPUT_VIDEO="../output_videos/kitchen_clip_fixed_output.mp4"
 
 # Dynamic class discovery via Gemini (set to false to use hardcoded classes below)
-USE_DYNAMIC_CLASSES=true
+USE_DYNAMIC_CLASSES=false
 # Set to true to ignore cached classes and re-run Gemini discovery
 FORCE_REDISCOVER=false
 
 # Hardcoded fallback classes (used when USE_DYNAMIC_CLASSES=false or discovery fails)
-CUSTOM_CLASSES="headphone,lamp,monitor,watch,object,bottle,heater,hand,tablet,mouse,laptop,book,phone"
+# CUSTOM_CLASSES="headphone,lamp,monitor,watch,object,bottle,heater,hand,tablet,mouse,laptop,book,phone"
+CUSTOM_CLASSES="object"
+
 
 if [ "$USE_DYNAMIC_CLASSES" = true ]; then
     echo "Dynamic class discovery enabled. Running Gemini class discovery..."
@@ -47,7 +49,7 @@ fi
 # Processing options
 SKIP_FRAMES=1  # Process every Nth frame (1 = all frames)
 MAX_FRAMES=0   # Limit to N frames (0 = process all frames)
-BATCH_SIZE=8   # Number of frames to process per batch (reduced to avoid OOM)
+BATCH_SIZE=16   # Number of frames to process per batch (reduced to avoid OOM)
 CONFIDENCE_THRESHOLD=0.3  # Minimum confidence score for detections
 # SAM Masking: --disable_masking flag is used to reduce GPU memory usage
 # Remove --disable_masking to enable segmentation masks (uses more GPU memory)
@@ -95,5 +97,5 @@ eval $CMD
 echo ""
 echo "Done! Output video saved to: $OUTPUT_VIDEO"
 echo ""
-echo "To use different classes, edit CUSTOM_CLASSES in this script"
-echo "Example: CUSTOM_CLASSES=\"dog,cat,bird\""
+
+croc send $OUTPUT_VIDEO
