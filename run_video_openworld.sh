@@ -11,10 +11,10 @@
 source glee_venv/bin/activate
 
 # Configuration
-INPUT_VIDEO="../raw_videos/egocentric_watering.mp4"
+INPUT_VIDEO="../raw_videos/egocentric_room.mp4"
 MODEL_PATH="weights/GLEE_Pro_joint.pth"
 CONFIG="projects/GLEE/configs/images/Pro/Stage2_joint_training_CLIPteacher_EVA02L.yaml"
-OUTPUT_VIDEO="../output_videos/watering_output.mp4"
+OUTPUT_VIDEO="../output_videos/room_output.mp4"
 
 # Dynamic class discovery via Gemini (set to false to use hardcoded classes below)
 USE_DYNAMIC_CLASSES=True
@@ -25,15 +25,18 @@ FORCE_REDISCOVER=False
 # DISCOVERY_MODE controls how many Gemini API calls are made and what class info is generated.
 # Each mode includes scene context detection first (if SCENE_AWARE=true), then:
 #
-#   simple     - 1 API call.  Basic 1-2 word class names (e.g. "cup", "phone"). Fastest.
-#   attributed - 2 API calls. Base classes + visual attributes (e.g. "white ceramic cup"). Default.
+#   simple     - 1 API call.  Basic 1-2 word class names via legacy path. Fastest.
+#   base       - 1 API call.  Scene-aware base classes only (e.g. "watering can", "cup").
+#                             Best for avoiding label switching between similar classes.
+#   attributed - 2 API calls. Base classes + visual attributes (e.g. "white ceramic cup").
+#                             Can cause label switching (e.g. "cup" vs "red cup" both ~0.3).
 #   referring  - 2 API calls. Base classes + spatial/relational expressions
 #                             (e.g. "the cup on the counter near the sink"). For GLEE grounding mode.
 #   full       - 3 API calls. All of the above combined. Slowest but most comprehensive.
 #
-DISCOVERY_MODE="attributed"
+DISCOVERY_MODE="base"
 SCENE_AWARE=true               # Enable scene context detection (adds 1 API call)
-MAX_CLASSES=30                 # Limit base classes
+MAX_CLASSES=32                 # Limit base classes
 
 # Hardcoded fallback classes (used when USE_DYNAMIC_CLASSES=false or discovery fails)
 # CUSTOM_CLASSES="headphone,lamp,monitor,watch,object,bottle,heater,hand,tablet,mouse,laptop,book,phone"

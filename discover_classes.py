@@ -422,7 +422,7 @@ def discover_classes_enhanced(
     Args:
         video_path: Path to the video file.
         api_key: Gemini API key (falls back to GEMINI_API_KEY env var).
-        mode: Discovery mode - 'simple', 'attributed', 'referring', or 'full'.
+        mode: Discovery mode - 'simple', 'base', 'attributed', 'referring', or 'full'.
         scene_aware: Whether to detect scene context first.
         max_classes: Maximum number of base classes to return.
 
@@ -439,30 +439,44 @@ def discover_classes_enhanced(
     total_cost = 0.0
 
     try:
-        # Step 1: Scene context detection (optional)
+        # Determine total steps for progress logging
+        total_steps = 1  # base class discovery is always step 1
+        if scene_aware:
+            total_steps += 1
+        if mode in ("attributed", "full"):
+            total_steps += 1
+        if mode in ("referring", "full"):
+            total_steps += 1
+        step = 0
+
+        # Step: Scene context detection (optional)
         scene_context = None
         if scene_aware:
-            _log("\nStep 1/4: Detecting scene context...")
+            step += 1
+            _log(f"\nStep {step}/{total_steps}: Detecting scene context...")
             scene_context = _detect_scene_context(client, uploaded_file)
 
-        # Step 2: Base class discovery (always performed)
-        _log("\nStep 2/4: Discovering base classes...")
+        # Step: Base class discovery (always performed)
+        step += 1
+        _log(f"\nStep {step}/{total_steps}: Discovering base classes...")
         base_classes = _generate_base_classes(
             client, uploaded_file, scene_context, max_classes
         )
 
-        # Step 3: Attributed classes (if mode is attributed or full)
+        # Step: Attributed classes (if mode is attributed or full)
         attributed_classes: List[Dict[str, Any]] = []
         if mode in ("attributed", "full"):
-            _log("\nStep 3/4: Generating attributed class variants...")
+            step += 1
+            _log(f"\nStep {step}/{total_steps}: Generating attributed class variants...")
             attributed_classes = _generate_attributed_classes(
                 client, uploaded_file, base_classes
             )
 
-        # Step 4: Referring expressions (if mode is referring or full)
+        # Step: Referring expressions (if mode is referring or full)
         referring_expressions: List[Dict[str, Any]] = []
         if mode in ("referring", "full"):
-            _log("\nStep 4/4: Generating referring expressions...")
+            step += 1
+            _log(f"\nStep {step}/{total_steps}: Generating referring expressions...")
             referring_expressions = _generate_referring_expressions(
                 client, uploaded_file, base_classes, scene_context
             )
@@ -667,9 +681,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--mode",
-        choices=["simple", "attributed", "referring", "full"],
+        choices=["simple", "base", "attributed", "referring", "full"],
         default="attributed",
-        help="Discovery mode (default: attributed)",
+        help="Discovery mode: simple (legacy), base (scene+classes only), attributed, referring, full",
     )
     parser.add_argument(
         "--scene-aware",
