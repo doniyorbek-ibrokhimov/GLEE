@@ -11,24 +11,43 @@
 source glee_venv/bin/activate
 
 # Configuration
-INPUT_VIDEO="../raw_videos/room_short_more_objects.qt"
+INPUT_VIDEO="../raw_videos/kitchen_clip_fixed.mp4"
 MODEL_PATH="models/GLEE_Lite_joint.pth"
 CONFIG="projects/GLEE/configs/images/Lite/Stage2_joint_training_CLIPteacher_R50.yaml"
-OUTPUT_VIDEO="../output_videos/room_short_more_objects_output_segmented.mp4"
+OUTPUT_VIDEO="../output_videos/kitchen_clip_fixed_output_segmented.mp4"
 
-# Open-world detection parameters
-# Specify any classes you want to detect (comma-separated, no spaces after commas)
-# Examples:
-#   "pizza,plate,hand" - detect pizza, plate, and hand
-#   "car,person,bicycle" - detect vehicles and people
-#   "laptop,book,phone" - detect electronics and objects
+# Dynamic class discovery via Gemini (set to false to use hardcoded classes below)
+USE_DYNAMIC_CLASSES=true
+# Set to true to ignore cached classes and re-run Gemini discovery
+FORCE_REDISCOVER=false
+
+# Hardcoded fallback classes (used when USE_DYNAMIC_CLASSES=false or discovery fails)
 CUSTOM_CLASSES="headphone,lamp,monitor,watch,object,bottle,heater,hand,tablet,mouse,laptop,book,phone"
-# CUSTOM_CLASSES="object"
+
+if [ "$USE_DYNAMIC_CLASSES" = true ]; then
+    echo "Dynamic class discovery enabled. Running Gemini class discovery..."
+    # Ensure google-genai and python-dotenv are installed
+    pip install -q google-genai python-dotenv 2>/dev/null
+
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    DISCOVER_ARGS="--video $INPUT_VIDEO"
+    if [ "$FORCE_REDISCOVER" = true ]; then
+        DISCOVER_ARGS="$DISCOVER_ARGS --no-cache"
+    fi
+    DISCOVERED_CLASSES=$(python3 "$SCRIPT_DIR/discover_classes.py" $DISCOVER_ARGS)
+
+    if [ $? -eq 0 ] && [ -n "$DISCOVERED_CLASSES" ]; then
+        CUSTOM_CLASSES="$DISCOVERED_CLASSES"
+        echo "Discovered classes: $CUSTOM_CLASSES"
+    else
+        echo "WARNING: Class discovery failed. Falling back to hardcoded classes."
+    fi
+fi
 
 # Processing options
 SKIP_FRAMES=1  # Process every Nth frame (1 = all frames)
 MAX_FRAMES=0   # Limit to N frames (0 = process all frames)
-BATCH_SIZE=4   # Number of frames to process per batch (reduced to avoid OOM)
+BATCH_SIZE=8   # Number of frames to process per batch (reduced to avoid OOM)
 CONFIDENCE_THRESHOLD=0.3  # Minimum confidence score for detections
 # SAM Masking: --disable_masking flag is used to reduce GPU memory usage
 # Remove --disable_masking to enable segmentation masks (uses more GPU memory)

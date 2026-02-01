@@ -27,36 +27,42 @@ def setup(args):
     return cfg
 
 def extract_frames_from_video(video_path, max_frames=None, skip_frames=1):
-    """Extract frames from video file"""
+    """Extract frames from video file. Returns (frames, fps)."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise ValueError(f"Cannot open video: {video_path}")
-    
+
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps <= 0:
+        fps = 30.0  # fallback
+
     frames = []
     frame_count = 0
     processed_count = 0
-    
+
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
-        
+
         frame_count += 1
-        
+
         # Skip frames if needed
         if frame_count % skip_frames != 0:
             continue
-        
+
         # Convert BGR to RGB
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frames.append(frame_rgb)
         processed_count += 1
-        
+
         if max_frames and processed_count >= max_frames:
             break
-    
+
     cap.release()
-    return frames
+    # Adjust FPS when skipping frames to preserve video duration
+    output_fps = fps / skip_frames
+    return frames, output_fps
 
 def main(args):
     cfg = setup(args)
@@ -100,12 +106,12 @@ def main(args):
     if hasattr(args, 'input_video') and args.input_video:
         # Extract frames from video
         print(f"Extracting frames from video: {args.input_video}")
-        frames = extract_frames_from_video(
-            args.input_video, 
+        frames, video_fps = extract_frames_from_video(
+            args.input_video,
             max_frames=getattr(args, 'max_frames', None),
             skip_frames=getattr(args, 'skip_frames', 1)
         )
-        print(f"Extracted {len(frames)} frames")
+        print(f"Extracted {len(frames)} frames (source FPS: {video_fps:.2f})")
         
         if len(frames) == 0:
             print("No frames extracted from video!")
@@ -119,19 +125,20 @@ def main(args):
         if not os.path.exists(img_dir):
             print(f"Image directory not found: {img_dir}")
             return
-        
+
         frames = []
         file_names = []
+        video_fps = 30.0  # default for image sequences
         for frame_file in sorted(os.listdir(img_dir)):
             img_path = os.path.join(img_dir, frame_file)
             file_names.append(img_path)
             image = utils.read_image(img_path, format='RGB')
             frames.append(image)
-        
+
         if len(frames) == 0:
             print("No images found in directory!")
             return
-        
+
         ori_height, ori_width = frames[0].shape[:2]
 
     # Get custom classes from command line (required for open-world mode)
@@ -158,7 +165,7 @@ def main(args):
     if output_video_path:
         print(f"Initializing output video: {output_video_path}")
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        out = cv2.VideoWriter(output_video_path, fourcc, 30.0, (ori_width, ori_height))
+        out = cv2.VideoWriter(output_video_path, fourcc, video_fps, (ori_width, ori_height))
     
     confidence_threshold = getattr(args, 'confidence_threshold', 0.5)
     total_detections = 0
@@ -180,18 +187,20 @@ def main(args):
             image_shape = image.shape[:2]
             img_list.append(torch.as_tensor(np.ascontiguousarray(image.transpose(2, 0, 1))))
         
-        inputs = [{
-            'height': ori_height,
-            'width': ori_width,
-            'image': img_list,
-            'task': task,  # Use 'coco_clip' for open-world detection
-            'file_names': batch_file_names,
-            'prompt': None
-        }]
-        
-        # Add batch_name_list for open-world detection
-        if batch_name_list is not None:
-            inputs[0]['batch_name_list'] = batch_name_list
+        inputs = []
+        for i, img_tensor in enumerate(img_list):
+            input_dict = {
+                'height': ori_height,
+                'width': ori_width,
+                'image': [img_tensor],  # wrap in list for preprocess_video compatibility
+                'task': task,  # Use 'coco_clip' for open-world detection
+                'file_names': batch_file_names[i] if i < len(batch_file_names) else f"frame_{batch_start + i}",
+                'prompt': None
+            }
+            # Add batch_name_list for open-world detection
+            if batch_name_list is not None:
+                input_dict['batch_name_list'] = batch_name_list
+            inputs.append(input_dict)
 
         with torch.no_grad():
             outputs = model(inputs)
