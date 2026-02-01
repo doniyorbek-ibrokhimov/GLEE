@@ -63,7 +63,8 @@ CMD="python3 video_demo.py \
     --skip_frames $SKIP_FRAMES \
     --batch_size $BATCH_SIZE \
     --confidence_threshold $CONFIDENCE_THRESHOLD \
-    --classes \"$CUSTOM_CLASSES\""
+    --classes \"$CUSTOM_CLASSES\"
+    --disable_masking"
 
 # Add max_frames if not 0
 if [ $MAX_FRAMES -gt 0 ]; then
