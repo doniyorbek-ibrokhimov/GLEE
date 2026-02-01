@@ -11,15 +11,29 @@
 source glee_venv/bin/activate
 
 # Configuration
-INPUT_VIDEO="../raw_videos/kitchen.mp4"
+INPUT_VIDEO="../raw_videos/egocentric_watering.mp4"
 MODEL_PATH="weights/GLEE_Pro_joint.pth"
 CONFIG="projects/GLEE/configs/images/Pro/Stage2_joint_training_CLIPteacher_EVA02L.yaml"
-OUTPUT_VIDEO="../output_videos/kitchen_output.mp4"
+OUTPUT_VIDEO="../output_videos/watering_output.mp4"
 
 # Dynamic class discovery via Gemini (set to false to use hardcoded classes below)
-USE_DYNAMIC_CLASSES=false
+USE_DYNAMIC_CLASSES=True
 # Set to true to ignore cached classes and re-run Gemini discovery
-FORCE_REDISCOVER=false
+FORCE_REDISCOVER=False
+
+# Enhanced discovery settings
+# DISCOVERY_MODE controls how many Gemini API calls are made and what class info is generated.
+# Each mode includes scene context detection first (if SCENE_AWARE=true), then:
+#
+#   simple     - 1 API call.  Basic 1-2 word class names (e.g. "cup", "phone"). Fastest.
+#   attributed - 2 API calls. Base classes + visual attributes (e.g. "white ceramic cup"). Default.
+#   referring  - 2 API calls. Base classes + spatial/relational expressions
+#                             (e.g. "the cup on the counter near the sink"). For GLEE grounding mode.
+#   full       - 3 API calls. All of the above combined. Slowest but most comprehensive.
+#
+DISCOVERY_MODE="attributed"
+SCENE_AWARE=true               # Enable scene context detection (adds 1 API call)
+MAX_CLASSES=30                 # Limit base classes
 
 # Hardcoded fallback classes (used when USE_DYNAMIC_CLASSES=false or discovery fails)
 # CUSTOM_CLASSES="headphone,lamp,monitor,watch,object,bottle,heater,hand,tablet,mouse,laptop,book,phone"
@@ -27,15 +41,18 @@ CUSTOM_CLASSES="small glass,cup,plate,sponge,bottle,lemon,chocolate box,tray,bow
 # CUSTOM_CLASSES="object"
 
 
-if [ "$USE_DYNAMIC_CLASSES" = true ]; then
+if [ "${USE_DYNAMIC_CLASSES,,}" = true ]; then
     echo "Dynamic class discovery enabled. Running Gemini class discovery..."
     # Ensure google-genai and python-dotenv are installed
     pip install -q google-genai python-dotenv 2>/dev/null
 
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    DISCOVER_ARGS="--video $INPUT_VIDEO"
-    if [ "$FORCE_REDISCOVER" = true ]; then
+    DISCOVER_ARGS="--video $INPUT_VIDEO --mode $DISCOVERY_MODE --output-format simple --max-classes $MAX_CLASSES"
+    if [ "${FORCE_REDISCOVER,,}" = true ]; then
         DISCOVER_ARGS="$DISCOVER_ARGS --no-cache"
+    fi
+    if [ "${SCENE_AWARE,,}" = false ]; then
+        DISCOVER_ARGS="$DISCOVER_ARGS --no-scene-aware"
     fi
     DISCOVERED_CLASSES=$(python3 "$SCRIPT_DIR/discover_classes.py" $DISCOVER_ARGS)
 
@@ -50,7 +67,7 @@ fi
 # Processing options
 SKIP_FRAMES=1  # Process every Nth frame (1 = all frames)
 MAX_FRAMES=0   # Limit to N frames (0 = process all frames)
-BATCH_SIZE=16   # Number of frames to process per batch (reduced to avoid OOM)
+BATCH_SIZE=36   # Number of frames to process per batch (reduced to avoid OOM)
 CONFIDENCE_THRESHOLD=0.3  # Minimum confidence score for detections
 # SAM Masking: --disable_masking flag is used to reduce GPU memory usage
 # Remove --disable_masking to enable segmentation masks (uses more GPU memory)
@@ -86,6 +103,11 @@ echo "Output Video: $OUTPUT_VIDEO"
 echo "Custom Classes: $CUSTOM_CLASSES"
 echo "Batch Size: $BATCH_SIZE"
 echo "Confidence Threshold: $CONFIDENCE_THRESHOLD"
+if [ "${USE_DYNAMIC_CLASSES,,}" = true ]; then
+    echo "Discovery Mode: $DISCOVERY_MODE"
+    echo "Scene Aware: $SCENE_AWARE"
+    echo "Max Classes: $MAX_CLASSES"
+fi
 if [ $MAX_FRAMES -gt 0 ]; then
     echo "Max Frames: $MAX_FRAMES"
 fi

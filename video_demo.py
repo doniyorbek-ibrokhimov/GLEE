@@ -1,4 +1,7 @@
+import json
 import os
+from typing import Dict, List, Optional, Tuple
+
 import torch
 import numpy as np
 import cv2
@@ -12,6 +15,59 @@ from detectron2.data import detection_utils as utils
 from detectron2.data import transforms as T
 from PIL import Image
 from segment_anything import sam_model_registry, SamPredictor
+
+
+def load_discovered_classes(
+    discovery_json_path: str,
+    mode: str = "attributed",
+) -> Tuple[List[str], Optional[Dict]]:
+    """Extract classes from an enhanced discovery result JSON file.
+
+    Args:
+        discovery_json_path: Path to the discovery result JSON file.
+        mode: Which class level to extract - 'simple' uses only base class
+            names, 'attributed' adds attributed variants, 'referring' is
+            reserved for future grounding mode support.
+
+    Returns:
+        Tuple of (batch_name_list, discovery_data). batch_name_list is the
+        list of class name strings to pass to GLEE. discovery_data is the
+        full parsed JSON dict (or None if loading failed).
+    """
+    with open(discovery_json_path, "r") as f:
+        data = json.load(f)
+
+    # If the file has a batch_name_list, use it directly (already deduplicated)
+    if "batch_name_list" in data:
+        names = data["batch_name_list"]
+    elif "classes" in data:
+        # Build from classes structure
+        classes_section = data["classes"]
+        if isinstance(classes_section, dict):
+            names = [c["name"] for c in classes_section.get("base", [])]
+            if mode in ("attributed", "full"):
+                for attr in classes_section.get("attributed", []):
+                    name = attr.get("name", "")
+                    if name and name not in names:
+                        names.append(name)
+        elif isinstance(classes_section, list):
+            # Legacy simple format: classes is a list of strings
+            names = [str(c) for c in classes_section]
+        else:
+            names = []
+    else:
+        names = []
+
+    if mode == "simple":
+        # Only return base class names
+        base_names = []
+        classes_section = data.get("classes", {})
+        if isinstance(classes_section, dict):
+            base_names = [c["name"] for c in classes_section.get("base", [])]
+        if base_names:
+            names = base_names
+
+    return names, data
 
 
 def setup(args):
@@ -74,33 +130,37 @@ def main(args):
     else:
         DetectionCheckpointer(model).load('GLEE_Plus_joint.pth')
 
-    # Initialize SAM model
-    sam_checkpoint = getattr(args, 'sam_checkpoint', None)
-    if sam_checkpoint is None:
-        # Try alternative paths (relative to script location and project root)
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.dirname(script_dir)
-        alt_paths = [
-            os.path.join(project_root, 'segment-anything', 'checkpoints', 'sam_vit_h_4b8939.pth'),
-            'segment-anything/checkpoints/sam_vit_h_4b8939.pth',
-            '../segment-anything/checkpoints/sam_vit_h_4b8939.pth',
-            os.path.join(script_dir, '..', 'segment-anything', 'checkpoints', 'sam_vit_h_4b8939.pth'),
-            'checkpoints/sam_vit_h_4b8939.pth',
-        ]
-        for alt_path in alt_paths:
-            abs_path = os.path.abspath(alt_path)
-            if os.path.exists(abs_path):
-                sam_checkpoint = abs_path
-                break
-        else:
-            raise FileNotFoundError(f"SAM checkpoint not found. Tried: {alt_paths}")
-    elif not os.path.exists(sam_checkpoint):
-        raise FileNotFoundError(f"SAM checkpoint not found at: {sam_checkpoint}")
+    # Initialize SAM model (skip if masking is disabled to save VRAM)
+    if getattr(args, 'enable_masking', True):
+        sam_checkpoint = getattr(args, 'sam_checkpoint', None)
+        if sam_checkpoint is None:
+            # Try alternative paths (relative to script location and project root)
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.dirname(script_dir)
+            alt_paths = [
+                os.path.join(project_root, 'segment-anything', 'checkpoints', 'sam_vit_h_4b8939.pth'),
+                'segment-anything/checkpoints/sam_vit_h_4b8939.pth',
+                '../segment-anything/checkpoints/sam_vit_h_4b8939.pth',
+                os.path.join(script_dir, '..', 'segment-anything', 'checkpoints', 'sam_vit_h_4b8939.pth'),
+                'checkpoints/sam_vit_h_4b8939.pth',
+            ]
+            for alt_path in alt_paths:
+                abs_path = os.path.abspath(alt_path)
+                if os.path.exists(abs_path):
+                    sam_checkpoint = abs_path
+                    break
+            else:
+                raise FileNotFoundError(f"SAM checkpoint not found. Tried: {alt_paths}")
+        elif not os.path.exists(sam_checkpoint):
+            raise FileNotFoundError(f"SAM checkpoint not found at: {sam_checkpoint}")
 
-    sam_model = sam_model_registry["vit_h"](checkpoint=sam_checkpoint)
-    sam_model.to(device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
-    sam_predictor = SamPredictor(sam_model)
-    print(f"SAM model loaded successfully from {sam_checkpoint}")
+        sam_model = sam_model_registry["vit_h"](checkpoint=sam_checkpoint)
+        sam_model.to(device=torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+        sam_predictor = SamPredictor(sam_model)
+        print(f"SAM model loaded successfully from {sam_checkpoint}")
+    else:
+        sam_predictor = None
+        print("SAM masking disabled - skipping SAM model loading to save VRAM")
 
     # Determine input source
     if hasattr(args, 'input_video') and args.input_video:
@@ -141,11 +201,22 @@ def main(args):
 
         ori_height, ori_width = frames[0].shape[:2]
 
-    # Get custom classes from command line (required for open-world mode)
-    # Parse comma-separated class names
-    custom_classes = [cls.strip() for cls in args.classes.split(',')]
-    print(f"Using custom classes: {custom_classes}")
-    batch_name_list = custom_classes
+    # Get custom classes: from discovery JSON or comma-separated CLI argument
+    discovery_data = None
+    if getattr(args, 'discovery_json', None) and os.path.exists(args.discovery_json):
+        discovery_mode = getattr(args, 'class_discovery_mode', 'attributed')
+        batch_name_list, discovery_data = load_discovered_classes(
+            args.discovery_json, mode=discovery_mode
+        )
+        print(f"Loaded {len(batch_name_list)} classes from discovery JSON ({discovery_mode} mode)")
+        if discovery_data and 'scene_context' in discovery_data:
+            print(f"Scene context: {discovery_data['scene_context']}")
+    else:
+        # Parse comma-separated class names
+        custom_classes = [cls.strip() for cls in args.classes.split(',')]
+        batch_name_list = custom_classes
+
+    print(f"Using classes ({len(batch_name_list)}): {batch_name_list}")
     task = 'coco_clip'  # Use coco_clip task for open-world detection
     
     min_size = cfg.INPUT.MIN_SIZE_TEST
@@ -389,6 +460,8 @@ if __name__ == "__main__":
     parser.add_argument('--sam_checkpoint', type=str, default=None, help='path to SAM checkpoint (default: auto-detect)')
     parser.add_argument('--enable_masking', action='store_true', default=True, help='enable SAM segmentation masking (default: enabled)')
     parser.add_argument('--disable_masking', dest='enable_masking', action='store_false', help='disable SAM segmentation masking to reduce GPU memory usage')
+    parser.add_argument('--discovery_json', type=str, default=None, help='path to enhanced discovery result JSON file (from discover_classes.py --output-format enhanced)')
+    parser.add_argument('--class_discovery_mode', choices=['simple', 'attributed', 'referring'], default='attributed', help='which class level to use from discovery JSON (default: attributed)')
 
     args = parser.parse_args()
     print("Command Line Args:", args)
