@@ -182,6 +182,7 @@ def process_video_with_sam3_video(
 
     # Use predictor's stream_inference with text prompts
     # This returns Results objects with detections and masks
+    batch_start_time = time.time()
     for result in predictor.stream_inference(source=video_path, text=class_names):
         frame_start = time.time()
 
@@ -202,10 +203,12 @@ def process_video_with_sam3_video(
 
         if frame_idx % 50 == 0:
             timestamp = time.strftime("%H:%M:%S")
-            print(
-                f"[{timestamp}] Processing frame {frame_idx}...",
-                flush=True,
-            )
+            if frame_idx == 0:
+                print(f"[{timestamp}] Processing frame {frame_idx}...", flush=True)
+            else:
+                elapsed = time.time() - batch_start_time
+                print(f"[{timestamp}] Processing frame {frame_idx} (last 50 frames: {elapsed:.1f}s, {50/elapsed:.1f} fps)...", flush=True)
+            batch_start_time = time.time()
 
         frame_detections: List[Dict] = []
         wrote_frame = False
