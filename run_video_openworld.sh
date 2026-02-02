@@ -140,6 +140,18 @@ echo ""
 # Run the command
 eval $CMD
 
+# Convert detections JSON to NPZ format
+OUTPUT_DIR=$(dirname "$OUTPUT_VIDEO")
+INPUT_BASE=$(basename "$INPUT_VIDEO" | sed 's/\.[^.]*$//')
+DETECTIONS_JSON="${OUTPUT_DIR}/${INPUT_BASE}_detections.json"
+
+if [ -f "$DETECTIONS_JSON" ]; then
+    echo "Converting detections to NPZ format..."
+    python3 "$(dirname "${BASH_SOURCE[0]}")/../scripts/json_to_npz.py" "$DETECTIONS_JSON"
+else
+    echo "WARNING: Detections JSON not found at $DETECTIONS_JSON, skipping NPZ conversion."
+fi
+
 echo ""
 echo "Done! Output video saved to: $OUTPUT_VIDEO"
 echo ""
