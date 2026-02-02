@@ -11,10 +11,10 @@
 source glee_venv/bin/activate
 
 # Configuration
-INPUT_VIDEO="../raw_videos/egocentric_room.mp4"
+INPUT_VIDEO="../raw_videos/egocentric_folding_part1.mp4"
 MODEL_PATH="weights/GLEE_Pro_joint.pth"
 CONFIG="projects/GLEE/configs/images/Pro/Stage2_joint_training_CLIPteacher_EVA02L.yaml"
-OUTPUT_VIDEO="../output_videos/egocentric_room_output.mp4"
+OUTPUT_VIDEO="../output_videos/_egocentric_folding_part1.output.mp4"
 
 # Dynamic class discovery via Gemini (set to false to use hardcoded classes below)
 USE_DYNAMIC_CLASSES=True
@@ -145,7 +145,8 @@ eval $CMD
 
 # Convert detections JSON to NPZ format
 OUTPUT_DIR=$(dirname "$OUTPUT_VIDEO")
-INPUT_BASE=$(basename "$INPUT_VIDEO" | sed 's/\.[^.]*$//')
+INPUT_BASE=$(basename "$INPUT_VIDEO")
+INPUT_BASE="${INPUT_BASE%.*}"
 DETECTIONS_JSON="${OUTPUT_DIR}/${INPUT_BASE}_detections.json"
 
 if [ -f "$DETECTIONS_JSON" ]; then
