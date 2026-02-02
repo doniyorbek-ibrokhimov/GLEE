@@ -415,8 +415,6 @@ def main(args):
                                     "label": label_name,
                                     "confidence": round(float(score), 4),
                                 }
-                                if track_ids is not None:
-                                    det_entry["track_id"] = int(track_ids[i])
                                 frame_detections.append(det_entry)
 
                                 # Draw bounding box (xyxy directly)
@@ -425,12 +423,8 @@ def main(args):
                                 x2 = max(0, min(int(boxes_xyxy[i][2]), ori_width - 1))
                                 y2 = max(0, min(int(boxes_xyxy[i][3]), ori_height - 1))
 
-                                if track_ids is not None:
-                                    color = get_track_color(track_ids[i])
-                                    label_text = f"[{track_ids[i]}] {label_name}: {score:.2f}"
-                                else:
-                                    color = (0, 255, 0)
-                                    label_text = f"{label_name}: {score:.2f}"
+                                color = (0, 255, 0)
+                                label_text = f"{label_name}: {score:.2f}"
 
                                 cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
 
@@ -495,12 +489,6 @@ def main(args):
             "class_names": batch_name_list,
             "detector": "glee",
             "confidence_threshold": confidence_threshold,
-            "tracking": {
-                "enabled": tracker is not None,
-                "max_age": getattr(args, 'max_age', 3),
-                "min_hits": getattr(args, 'min_hits', 3),
-                "iou_threshold": getattr(args, 'iou_threshold', 0.3),
-            },
             "detections": all_detections,
         }
         with open(save_detections, "w") as f:
