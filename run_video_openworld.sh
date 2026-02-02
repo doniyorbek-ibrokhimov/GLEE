@@ -113,7 +113,7 @@ fi
 # Add num-gpus if needed (for detectron2)
 # Override DATASET_MAPPER_NAME to disable LSJ box postprocessing,
 # since video_demo.py uses ResizeShortestEdge (not LSJ padding)
-CMD="$CMD --num-gpus 1 INPUT.DATASET_MAPPER_NAME coco_instance_new_baselines"
+CMD="$CMD --num-gpus 1 INPUT.DATASET_MAPPER_NAME coco_instance_new_baselines INPUT.MIN_SIZE_TEST 1024 INPUT.MAX_SIZE_TEST 1536"
 
 # Print configuration
 echo "=========================================="
