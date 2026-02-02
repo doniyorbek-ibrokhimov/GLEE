@@ -278,12 +278,19 @@ def process_video_with_sam3(
     print(f"Processing {len(frames)} frames with SAM 3...")
     print(f"Text prompts: {text_prompts}")
 
+    batch_start_time = time.time()
+
     for frame_idx, frame in enumerate(frames):
         frame_start = time.time()
 
         if frame_idx % 50 == 0:
             timestamp = time.strftime("%H:%M:%S")
-            print(f"[{timestamp}] Processing frame {frame_idx}/{len(frames)}...", flush=True)
+            if frame_idx == 0:
+                print(f"[{timestamp}] Processing frame {frame_idx}/{len(frames)}...", flush=True)
+            else:
+                elapsed = time.time() - batch_start_time
+                print(f"[{timestamp}] Processing frame {frame_idx}/{len(frames)} (last 50 frames: {elapsed:.1f}s, {50/elapsed:.1f} fps)...", flush=True)
+            batch_start_time = time.time()
 
         frame_detections = []
         wrote_frame = False
