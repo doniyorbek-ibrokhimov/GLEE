@@ -1,8 +1,10 @@
 import json
 import os
+import time
 from typing import Dict, List, Optional, Tuple
 
 import torch
+import torchvision.ops
 import numpy as np
 import cv2
 import argparse
@@ -249,7 +251,11 @@ def main(args):
         batch_frames = frames[batch_start:batch_end]
         batch_file_names = file_names[batch_start:batch_end]
         
-        print(f"Processing batch {batch_start//batch_size + 1}/{(len(frames)-1)//batch_size + 1} (frames {batch_start}-{batch_end-1})...")
+        batch_num = batch_start // batch_size + 1
+        total_batches = (len(frames) - 1) // batch_size + 1
+        batch_start_time = time.time()
+        timestamp = time.strftime("%H:%M:%S")
+        print(f"[{timestamp}] Processing batch {batch_num}/{total_batches} (frames {batch_start}-{batch_end-1})...", end="", flush=True)
         
         img_list = []
         for image in batch_frames:
@@ -303,6 +309,16 @@ def main(args):
                             else:
                                 boxes_xyxy = instances.pred_boxes.cpu().numpy()
                             
+                            # Apply per-class NMS to suppress overlapping boxes
+                            nms_boxes = torch.from_numpy(boxes_xyxy).float()
+                            nms_scores = torch.from_numpy(scores).float()
+                            nms_labels = torch.from_numpy(labels).int()
+                            keep = torchvision.ops.batched_nms(nms_boxes, nms_scores, nms_labels, iou_threshold=0.5)
+                            keep = keep.numpy()
+                            boxes_xyxy = boxes_xyxy[keep]
+                            scores = scores[keep]
+                            labels = labels[keep]
+
                             # Convert to xywh for drawing (existing logic)
                             if len(boxes_xyxy.shape) == 2 and boxes_xyxy.shape[1] == 4:
                                 boxes_xywh = boxes_xyxy.copy()
@@ -450,6 +466,9 @@ def main(args):
             # Free memory immediately after processing batch
             del outputs
             torch.cuda.empty_cache()
+
+        batch_elapsed = time.time() - batch_start_time
+        print(f" [{batch_elapsed:.1f}s]")
     
     print("All batches processed!")
     print(f"Found {total_detections} detections total")
