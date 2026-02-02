@@ -11,10 +11,10 @@
 source glee_venv/bin/activate
 
 # Configuration
-INPUT_VIDEO="../raw_videos/egocentric_room.mp4"
+INPUT_VIDEO="../raw_videos/egocentric_kitchen_part1.mp4"
 MODEL_PATH="weights/GLEE_Pro_joint.pth"
 CONFIG="projects/GLEE/configs/images/Pro/Stage2_joint_training_CLIPteacher_EVA02L.yaml"
-OUTPUT_VIDEO="../output_videos/room_output.mp4"
+OUTPUT_VIDEO="../output_videos/kitchen_part1_output.mp4"
 
 # Dynamic class discovery via Gemini (set to false to use hardcoded classes below)
 USE_DYNAMIC_CLASSES=True
@@ -75,6 +75,12 @@ CONFIDENCE_THRESHOLD=0.3  # Minimum confidence score for detections
 # SAM Masking: --disable_masking flag is used to reduce GPU memory usage
 # Remove --disable_masking to enable segmentation masks (uses more GPU memory)
 
+# SORT Tracking options
+ENABLE_TRACKING=true  # Enable SORT-style IoU tracking for stable IDs
+MAX_AGE=3             # Max frames a track survives without detection
+MIN_HITS=3            # Min consecutive hits to confirm a track
+IOU_THRESHOLD=0.3     # Min IoU to match detection to track
+
 # Build command
 CMD="python3 video_demo.py \
     --input_video \"$INPUT_VIDEO\" \
@@ -85,7 +91,17 @@ CMD="python3 video_demo.py \
     --batch_size $BATCH_SIZE \
     --confidence_threshold $CONFIDENCE_THRESHOLD \
     --classes \"$CUSTOM_CLASSES\" \
-    --disable_masking"
+    --disable_masking \
+    --max_age $MAX_AGE \
+    --min_hits $MIN_HITS \
+    --iou_threshold $IOU_THRESHOLD"
+
+# Add tracking flag
+if [ "${ENABLE_TRACKING,,}" = true ]; then
+    CMD="$CMD --enable_tracking"
+else
+    CMD="$CMD --disable_tracking"
+fi
 
 # Add max_frames if not 0
 if [ $MAX_FRAMES -gt 0 ]; then
@@ -117,6 +133,7 @@ fi
 if [ $SKIP_FRAMES -gt 1 ]; then
     echo "Skip Frames: $SKIP_FRAMES"
 fi
+echo "Tracking: $ENABLE_TRACKING (max_age=$MAX_AGE, min_hits=$MIN_HITS, iou=$IOU_THRESHOLD)"
 echo "=========================================="
 echo ""
 

@@ -17,6 +17,7 @@ from detectron2.data import detection_utils as utils
 from detectron2.data import transforms as T
 from PIL import Image
 from segment_anything import sam_model_registry, SamPredictor
+from sort_tracker import SortTracker, get_track_color
 
 
 def load_discovered_classes(
@@ -243,6 +244,18 @@ def main(args):
     confidence_threshold = getattr(args, 'confidence_threshold', 0.5)
     total_detections = 0
     all_detections = {}  # frame_idx (str) -> list of detection dicts
+
+    # Initialize SORT tracker if enabled
+    if getattr(args, 'enable_tracking', True):
+        tracker = SortTracker(
+            max_age=getattr(args, 'max_age', 3),
+            min_hits=getattr(args, 'min_hits', 3),
+            iou_threshold=getattr(args, 'iou_threshold', 0.3),
+        )
+        print(f"SORT tracker enabled (max_age={tracker.max_age}, min_hits={tracker.min_hits}, iou_threshold={tracker.iou_threshold})")
+    else:
+        tracker = None
+        print("Tracking disabled")
     
     print(f"Processing {len(frames)} frames in batches of {batch_size}...")
     
@@ -319,85 +332,74 @@ def main(args):
                             scores = scores[keep]
                             labels = labels[keep]
 
-                            # Convert to xywh for drawing (existing logic)
-                            if len(boxes_xyxy.shape) == 2 and boxes_xyxy.shape[1] == 4:
-                                boxes_xywh = boxes_xyxy.copy()
-                                boxes_xywh[:, 2] = boxes_xyxy[:, 2] - boxes_xyxy[:, 0]  # width
-                                boxes_xywh[:, 3] = boxes_xyxy[:, 3] - boxes_xyxy[:, 1]  # height
-                            else:
-                                boxes_xywh = boxes_xyxy
+                            # Filter by confidence threshold
+                            conf_mask = scores >= confidence_threshold
+                            boxes_xyxy = boxes_xyxy[conf_mask]
+                            scores = scores[conf_mask]
+                            labels = labels[conf_mask]
+
+                            # SORT tracker update (after NMS + confidence filter, before SAM)
+                            track_ids = None
+                            if tracker is not None and len(boxes_xyxy) > 0:
+                                tracked = tracker.update(boxes_xyxy, scores, labels)
+                                if len(tracked) > 0:
+                                    boxes_xyxy = tracked[:, :4]
+                                    track_ids = tracked[:, 4].astype(int)
+                                    scores = tracked[:, 5]
+                                    labels = tracked[:, 6].astype(int)
+                                # else: tracker returned nothing, fall through with raw detections
 
                             # Generate SAM masks for detected objects (if enabled)
                             if getattr(args, 'enable_masking', True):
                                 masks = None
                                 mask_scores = None
                                 if len(boxes_xyxy) > 0:
-                                    # Filter boxes by confidence before SAM (efficiency)
-                                    valid_indices = scores >= confidence_threshold
-                                    valid_boxes = boxes_xyxy[valid_indices].copy()
+                                    valid_boxes = boxes_xyxy.copy()
 
-                                    if len(valid_boxes) > 0:
-                                        # Clip boxes to image bounds before SAM
-                                        h, w = img.shape[:2]
-                                        valid_boxes[:, 0] = np.clip(valid_boxes[:, 0], 0, w - 1)  # x1
-                                        valid_boxes[:, 1] = np.clip(valid_boxes[:, 1], 0, h - 1)  # y1
-                                        valid_boxes[:, 2] = np.clip(valid_boxes[:, 2], 0, w - 1)  # x2
-                                        valid_boxes[:, 3] = np.clip(valid_boxes[:, 3], 0, h - 1)  # y2
+                                    # Clip boxes to image bounds before SAM
+                                    h, w = img.shape[:2]
+                                    valid_boxes[:, 0] = np.clip(valid_boxes[:, 0], 0, w - 1)
+                                    valid_boxes[:, 1] = np.clip(valid_boxes[:, 1], 0, h - 1)
+                                    valid_boxes[:, 2] = np.clip(valid_boxes[:, 2], 0, w - 1)
+                                    valid_boxes[:, 3] = np.clip(valid_boxes[:, 3], 0, h - 1)
 
-                                        # Set image once per frame
-                                        sam_predictor.set_image(img, image_format="RGB")
+                                    # Set image once per frame
+                                    sam_predictor.set_image(img, image_format="RGB")
 
-                                        # Process each box individually (SAM's predict expects single box)
-                                        masks_list = []
-                                        mask_scores_list = []
-                                        for box in valid_boxes:
-                                            mask, mask_score, _ = sam_predictor.predict(
-                                                box=box,
-                                                multimask_output=False  # Single best mask per box
-                                            )
-                                            masks_list.append(mask[0])  # Extract single mask from output
-                                            mask_scores_list.append(mask_score[0])  # Extract single score
+                                    masks_list = []
+                                    mask_scores_list = []
+                                    for box in valid_boxes:
+                                        mask, mask_score, _ = sam_predictor.predict(
+                                            box=box,
+                                            multimask_output=False,
+                                        )
+                                        masks_list.append(mask[0])
+                                        mask_scores_list.append(mask_score[0])
 
-                                        # Convert to numpy arrays
-                                        masks_all = np.array(masks_list)
-                                        mask_scores_all = np.array(mask_scores_list)
-
-                                        # Create full mask array aligned with all detections
-                                        masks = np.zeros((len(scores), img.shape[0], img.shape[1]), dtype=bool)
-                                        mask_scores = np.zeros(len(scores))
-                                        masks[valid_indices] = masks_all
-                                        mask_scores[valid_indices] = mask_scores_all
-                                    else:
-                                        masks = np.zeros((len(scores), img.shape[0], img.shape[1]), dtype=bool)
-                                        mask_scores = np.zeros(len(scores))
+                                    masks = np.array(masks_list)
+                                    mask_scores = np.array(mask_scores_list)
                                 else:
                                     masks = np.array([])
                                     mask_scores = np.array([])
 
                                 # Draw mask overlays first (so boxes appear on top)
                                 if masks is not None and len(masks) > 0:
-                                    for i in range(len(scores)):
-                                        if scores[i] >= confidence_threshold and i < len(masks):
-                                            mask = masks[i]
-                                            if mask.any():  # Check if mask has any True pixels
-                                                # Create colored overlay
-                                                color_mask = np.zeros_like(img)
-                                                # Use different colors for different objects (optional)
-                                                color = (0, 255, 0)  # Green default
-                                                color_mask[mask] = color
-                                                # Blend with original image (30% opacity)
-                                                img = cv2.addWeighted(img, 1.0, color_mask, 0.3, 0)
+                                    for i in range(len(masks)):
+                                        mask = masks[i]
+                                        if mask.any():
+                                            color_mask = np.zeros_like(img)
+                                            if track_ids is not None:
+                                                color = get_track_color(track_ids[i])
+                                            else:
+                                                color = (0, 255, 0)
+                                            color_mask[mask] = color
+                                            img = cv2.addWeighted(img, 1.0, color_mask, 0.3, 0)
 
                             # Draw detections on this frame
                             num_instances = len(scores)
                             for i in range(num_instances):
                                 score = float(scores[i])
                                 label = int(labels[i])
-                                
-                                # Filter by confidence threshold
-                                if score < confidence_threshold:
-                                    continue
-                                
                                 total_detections += 1
 
                                 # Resolve label name
@@ -407,54 +409,40 @@ def main(args):
                                     label_name = f"Class_{label}"
 
                                 # Collect detection for JSON output
-                                if len(boxes_xyxy.shape) == 2:
-                                    det_box = boxes_xyxy[i]
-                                    frame_detections.append({
-                                        "box_2d": [int(det_box[0]), int(det_box[1]),
-                                                   int(det_box[2]), int(det_box[3])],
-                                        "label": label_name,
-                                        "confidence": round(float(score), 4),
-                                    })
+                                det_entry = {
+                                    "box_2d": [int(boxes_xyxy[i][0]), int(boxes_xyxy[i][1]),
+                                               int(boxes_xyxy[i][2]), int(boxes_xyxy[i][3])],
+                                    "label": label_name,
+                                    "confidence": round(float(score), 4),
+                                }
+                                if track_ids is not None:
+                                    det_entry["track_id"] = int(track_ids[i])
+                                frame_detections.append(det_entry)
 
-                                # Get box for this instance (use xywh format)
-                                if len(boxes_xywh.shape) == 2:
-                                    box = boxes_xywh[i]
+                                # Draw bounding box (xyxy directly)
+                                x1 = max(0, min(int(boxes_xyxy[i][0]), ori_width - 1))
+                                y1 = max(0, min(int(boxes_xyxy[i][1]), ori_height - 1))
+                                x2 = max(0, min(int(boxes_xyxy[i][2]), ori_width - 1))
+                                y2 = max(0, min(int(boxes_xyxy[i][3]), ori_height - 1))
+
+                                if track_ids is not None:
+                                    color = get_track_color(track_ids[i])
+                                    label_text = f"[{track_ids[i]}] {label_name}: {score:.2f}"
                                 else:
-                                    box = boxes_xywh[i] if i < len(boxes_xywh) else None
-                                
-                                # Draw bounding box if available
-                                if box is not None and len(box) == 4:
-                                    # box is in xywh format (x, y, width, height), convert to xyxy
-                                    x, y, w, h = box
-                                    x1, y1 = int(x), int(y)
-                                    x2, y2 = int(x + w), int(y + h)
-                                    
-                                    # Clip to image bounds
-                                    x1 = max(0, min(x1, ori_width - 1))
-                                    y1 = max(0, min(y1, ori_height - 1))
-                                    x2 = max(0, min(x2, ori_width - 1))
-                                    y2 = max(0, min(y2, ori_height - 1))
-                                    
-                                    # Draw box
-                                    color = (0, 255, 0)  # Green
-                                    cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
-                                    
-                                    # Draw label
+                                    color = (0, 255, 0)
                                     label_text = f"{label_name}: {score:.2f}"
-                                    
-                                    # Get text size
-                                    font = cv2.FONT_HERSHEY_SIMPLEX
-                                    font_scale = 0.6
-                                    thickness = 2
-                                    (text_width, text_height), baseline = cv2.getTextSize(label_text, font, font_scale, thickness)
-                                    
-                                    # Draw label background
-                                    cv2.rectangle(img, (x1, y1 - text_height - baseline - 5), 
-                                                (x1 + text_width, y1), color, -1)
-                                    
-                                    # Draw label text
-                                    cv2.putText(img, label_text, (x1, y1 - baseline - 2), 
-                                               font, font_scale, (0, 0, 0), thickness)
+
+                                cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+
+                                font = cv2.FONT_HERSHEY_SIMPLEX
+                                font_scale = 0.6
+                                thickness = 2
+                                (text_width, text_height), baseline = cv2.getTextSize(label_text, font, font_scale, thickness)
+
+                                cv2.rectangle(img, (x1, y1 - text_height - baseline - 5),
+                                            (x1 + text_width, y1), color, -1)
+                                cv2.putText(img, label_text, (x1, y1 - baseline - 2),
+                                           font, font_scale, (0, 0, 0), thickness)
                     
                     all_detections[str(frame_idx)] = frame_detections
 
@@ -507,6 +495,12 @@ def main(args):
             "class_names": batch_name_list,
             "detector": "glee",
             "confidence_threshold": confidence_threshold,
+            "tracking": {
+                "enabled": tracker is not None,
+                "max_age": getattr(args, 'max_age', 3),
+                "min_hits": getattr(args, 'min_hits', 3),
+                "iou_threshold": getattr(args, 'iou_threshold', 0.3),
+            },
             "detections": all_detections,
         }
         with open(save_detections, "w") as f:
@@ -533,6 +527,11 @@ if __name__ == "__main__":
     parser.add_argument('--discovery_json', type=str, default=None, help='path to enhanced discovery result JSON file (from discover_classes.py --output-format enhanced)')
     parser.add_argument('--class_discovery_mode', choices=['simple', 'attributed', 'referring'], default='attributed', help='which class level to use from discovery JSON (default: attributed)')
     parser.add_argument('--save_detections', type=str, default='auto', help='path to save detections JSON file, or "auto" to derive from input video name (default: auto). Use "none" to disable.')
+    parser.add_argument('--enable_tracking', action='store_true', default=True, help='enable SORT-style IoU tracking (default: enabled)')
+    parser.add_argument('--disable_tracking', dest='enable_tracking', action='store_false', help='disable SORT-style IoU tracking')
+    parser.add_argument('--max_age', type=int, default=3, help='SORT tracker: max frames a track survives without update (default: 3)')
+    parser.add_argument('--min_hits', type=int, default=3, help='SORT tracker: min hit streak to confirm a track (default: 3)')
+    parser.add_argument('--iou_threshold', type=float, default=0.3, help='SORT tracker: minimum IoU for detection-track matching (default: 0.3)')
 
     args = parser.parse_args()
     print("Command Line Args:", args)
