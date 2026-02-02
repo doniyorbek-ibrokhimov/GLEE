@@ -160,9 +160,10 @@ def process_video_with_sam3_video(
     )
 
     # The predictor auto-initializes the model from overrides on first inference
-    # Get video FPS from the video file
+    # Get video FPS and frame count from the video file
     cap = cv2.VideoCapture(video_path)
     video_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    total_video_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.release()
 
     # Adjust FPS for skip_frames
@@ -180,6 +181,12 @@ def process_video_with_sam3_video(
     frame_idx = 0
 
     print(f"Processing video with SAM 3 Video Predictor...")
+    print(f"Total frames in video: {total_video_frames}")
+    if skip_frames > 1:
+        expected_frames = (total_video_frames + skip_frames - 1) // skip_frames
+        print(f"Expected frames to process (with skip_frames={skip_frames}): ~{expected_frames}")
+    if max_frames:
+        print(f"Max frames limit: {max_frames}")
     print(f"Text prompts: {class_names}")
 
     # Use predictor's stream_inference with text prompts
