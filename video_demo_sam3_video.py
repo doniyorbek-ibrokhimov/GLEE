@@ -38,9 +38,11 @@ from video_demo_sam3 import (
 # SAM 3 Video predictor import
 try:
     from ultralytics.models.sam.predict import SAM3VideoSemanticPredictor
+    from ultralytics import SAM
     SAM3_VIDEO_AVAILABLE = True
 except ImportError:
     SAM3VideoSemanticPredictor = None
+    SAM = None
     SAM3_VIDEO_AVAILABLE = False
     print(
         "WARNING: ultralytics not installed or SAM3VideoSemanticPredictor "
@@ -145,23 +147,22 @@ def process_video_with_sam3_video(
     if hotstart_delay is not None:
         predictor_kwargs["hotstart_delay"] = hotstart_delay
 
-    print(f"Loading SAM 3 Video Predictor: {model_name}")
+    print(f"Initializing SAM 3 Video Predictor with model: {model_name}")
     if compile_mode:
         print(f"torch.compile mode: {compile_mode}")
+
+    # Initialize predictor - it will load the model from overrides["model"]
     predictor = SAM3VideoSemanticPredictor(
-        overrides=overrides, **predictor_kwargs
+        overrides=overrides,
+        **predictor_kwargs
     )
 
-    # --- Setup model and video source ---
-    predictor.setup_model(model=model_name)
-    predictor.setup_source(video_path)
+    # The predictor auto-initializes the model from overrides on first inference
+    # Get video FPS from the video file
+    cap = cv2.VideoCapture(video_path)
+    video_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    cap.release()
 
-    # Fire on_predict_start callbacks (initialises inference_state)
-    predictor.run_callbacks("on_predict_start")
-
-    # Retrieve video metadata from the dataset
-    dataset = predictor.dataset
-    video_fps: float = getattr(dataset, "fps", 30.0) or 30.0
     # Adjust FPS for skip_frames
     output_fps = video_fps / skip_frames if skip_frames > 1 else video_fps
 
@@ -179,19 +180,14 @@ def process_video_with_sam3_video(
     print(f"Processing video with SAM 3 Video Predictor...")
     print(f"Text prompts: {class_names}")
 
-    for batch in dataset:
+    # Use predictor's stream_inference with text prompts
+    # This returns Results objects with detections and masks
+    for result in predictor.stream_inference(source=video_path, text=class_names):
         frame_start = time.time()
 
-        # batch is (path, im, im0s, vid_cap, s)
-        path, im, im0s, vid_cap, s = batch
-
-        # im is the preprocessed tensor; im0s is the original frame (BGR)
-        # For the Video predictor we pass the preprocessed image
-        if isinstance(im0s, list):
-            orig_frame_bgr = im0s[0]
-        else:
-            orig_frame_bgr = im0s
-
+        # Extract frame from result object
+        # result.orig_img is the original frame (BGR format)
+        orig_frame_bgr = result.orig_img
         orig_frame_rgb = cv2.cvtColor(orig_frame_bgr, cv2.COLOR_BGR2RGB)
         h, w = orig_frame_rgb.shape[:2]
 
@@ -214,20 +210,9 @@ def process_video_with_sam3_video(
         frame_detections: List[Dict] = []
         wrote_frame = False
 
-        # --- SAM 3 Video inference ---
-        # First frame: pass text prompts to initialize detection
-        # Subsequent frames: propagate memory (no text arg)
-        if frame_idx == 0:
-            results = predictor.inference(im, text=class_names)
-        else:
-            results = predictor.inference(im)
-
-        # Post-process to get Results objects
-        results = predictor.postprocess(results, im, im0s)
-
-        if results and len(results) > 0:
-            result = results[0]
-
+        # --- Extract results from stream_inference ---
+        # The result object already contains inference results with detections and masks
+        if result is not None:
             boxes_xyxy = None
             scores = None
             cls_indices = None

@@ -25,8 +25,8 @@ fi
 # ==========================================
 # Configuration
 # ==========================================
-INPUT_VIDEO="../raw_videos/egocentric_shelf.mp4"
-OUTPUT_VIDEO="../output_videos/egocentric_shelf_sam3v_output.mp4"
+INPUT_VIDEO="../raw_videos/kitchen_clip_fixed.mp4"
+OUTPUT_VIDEO="../output_videos/kitchen_clip_fixed_output.mp4"
 SAM3_MODEL="sam3.pt"  # Options: sam3.pt, sam3-t.pt, sam3-s.pt
 
 # Ensure output directory exists
