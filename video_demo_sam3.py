@@ -21,6 +21,8 @@ from typing import Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
+import torch
+import torchvision
 
 # SAM 3 imports (ultralytics backend)
 try:
@@ -226,6 +228,7 @@ def process_video_with_sam3(
     imgsz: int = 1024,
     video_fps: float = 30.0,
     output_video_path: Optional[str] = None,
+    nms_iou_threshold: float = 0.5,
 ) -> Tuple[Dict[str, list], int]:
     """Process frames with SAM 3 for detection + segmentation + tracking.
 
@@ -240,6 +243,7 @@ def process_video_with_sam3(
         imgsz: Input image size for SAM 3 inference (default: 1024).
         video_fps: Output video FPS.
         output_video_path: Path to write annotated video.
+        nms_iou_threshold: IoU threshold for NMS (default: 0.5).
 
     Returns:
         Tuple of (all_detections dict, total_detection_count).
@@ -331,6 +335,21 @@ def process_video_with_sam3(
                     track_ids = track_ids[conf_mask]
                 if masks is not None:
                     masks = masks[conf_mask]
+
+                # Apply NMS to remove overlapping boxes
+                if len(boxes_xyxy) > 0:
+                    keep = torchvision.ops.nms(
+                        torch.tensor(boxes_xyxy, dtype=torch.float32),
+                        torch.tensor(scores, dtype=torch.float32),
+                        iou_threshold=nms_iou_threshold,
+                    ).numpy()
+                    boxes_xyxy = boxes_xyxy[keep]
+                    scores = scores[keep]
+                    cls_indices = cls_indices[keep]
+                    if track_ids is not None:
+                        track_ids = track_ids[keep]
+                    if masks is not None:
+                        masks = masks[keep]
 
                 # Build detection entries and label names
                 label_names = []
@@ -435,6 +454,8 @@ def main() -> None:
                         help='Comma-separated class names (e.g., "pizza,plate,hand")')
     parser.add_argument("--confidence_threshold", type=float, default=0.3,
                         help="Minimum confidence score (default: 0.3)")
+    parser.add_argument("--nms_iou_threshold", type=float, default=0.5,
+                        help="IoU threshold for NMS to remove overlapping boxes (default: 0.5)")
     parser.add_argument("--skip_frames", type=int, default=1,
                         help="Process every Nth frame (1=all frames)")
     parser.add_argument("--max_frames", type=int, default=None,
@@ -509,6 +530,7 @@ def main() -> None:
         imgsz=args.imgsz,
         video_fps=video_fps,
         output_video_path=args.output_video,
+        nms_iou_threshold=args.nms_iou_threshold,
     )
 
     print(f"\nAll frames processed!")
