@@ -66,10 +66,10 @@ fi
 # Processing options
 SKIP_FRAMES=1       # Process every Nth frame (1 = all frames)
 MAX_FRAMES=0        # Limit to N frames (0 = process all frames)
-CONFIDENCE_THRESHOLD=0.3  # Minimum confidence score for detections
+CONFIDENCE_THRESHOLD=0.45  # Minimum confidence score for detections
 DEVICE="cuda"       # Device: cuda or cpu
 FP16=true           # Half precision inference (safe with 80GB VRAM, ~2x faster)
-IMGSZ=1024          # Input image size (default was 640, higher = better quality, more VRAM)
+IMGSZ=1036          # Input image size (default was 640, higher = better quality, more VRAM)
 
 # Build command
 CMD="python3 video_demo_sam3.py \
