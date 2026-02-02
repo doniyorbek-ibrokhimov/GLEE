@@ -11,10 +11,10 @@
 source glee_venv/bin/activate
 
 # Configuration
-INPUT_VIDEO="../raw_videos/kitchen_100frames.mp4"
+INPUT_VIDEO="../raw_videos/egocentric_room.mp4"
 MODEL_PATH="weights/GLEE_Pro_joint.pth"
 CONFIG="projects/GLEE/configs/images/Pro/Stage2_joint_training_CLIPteacher_EVA02L.yaml"
-OUTPUT_VIDEO="../output_videos/kitchen_100frames_output.mp4"
+OUTPUT_VIDEO="../output_videos/egocentric_room_output.mp4"
 
 # Dynamic class discovery via Gemini (set to false to use hardcoded classes below)
 USE_DYNAMIC_CLASSES=True
@@ -71,7 +71,7 @@ fi
 # Processing options
 SKIP_FRAMES=1  # Process every Nth frame (1 = all frames)
 MAX_FRAMES=0   # Limit to N frames (0 = process all frames)
-BATCH_SIZE=24   # Number of frames to process per batch (reduced to avoid OOM)
+BATCH_SIZE=22   # Number of frames to process per batch (reduced to avoid OOM)
 CONFIDENCE_THRESHOLD=0.3  # Minimum confidence score for detections
 
 # SAM Masking: --disable_masking flag is used to reduce GPU memory usage
@@ -113,6 +113,7 @@ fi
 # Add num-gpus if needed (for detectron2)
 # Override DATASET_MAPPER_NAME to disable LSJ box postprocessing,
 # since video_demo.py uses ResizeShortestEdge (not LSJ padding)
+# Default: 1024x1536
 CMD="$CMD --num-gpus 1 INPUT.DATASET_MAPPER_NAME coco_instance_new_baselines INPUT.MIN_SIZE_TEST 1080 INPUT.MAX_SIZE_TEST 1920"
 
 # Print configuration
