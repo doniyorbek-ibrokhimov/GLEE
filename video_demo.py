@@ -240,6 +240,7 @@ def main(args):
     
     confidence_threshold = getattr(args, 'confidence_threshold', 0.5)
     total_detections = 0
+    all_detections = {}  # frame_idx (str) -> list of detection dicts
     
     print(f"Processing {len(frames)} frames in batches of {batch_size}...")
     
@@ -286,6 +287,7 @@ def main(args):
                     
                     # Get the original frame
                     img = batch_frames[frame_in_batch].copy()
+                    frame_detections = []
                     
                     # Extract detections for this frame
                     if 'instances' in output_dict:
@@ -381,7 +383,23 @@ def main(args):
                                     continue
                                 
                                 total_detections += 1
-                                
+
+                                # Resolve label name
+                                if batch_name_list is not None and label < len(batch_name_list):
+                                    label_name = batch_name_list[label]
+                                else:
+                                    label_name = f"Class_{label}"
+
+                                # Collect detection for JSON output
+                                if len(boxes_xyxy.shape) == 2:
+                                    det_box = boxes_xyxy[i]
+                                    frame_detections.append({
+                                        "box_2d": [int(det_box[0]), int(det_box[1]),
+                                                   int(det_box[2]), int(det_box[3])],
+                                        "label": label_name,
+                                        "confidence": round(float(score), 4),
+                                    })
+
                                 # Get box for this instance (use xywh format)
                                 if len(boxes_xywh.shape) == 2:
                                     box = boxes_xywh[i]
@@ -406,10 +424,6 @@ def main(args):
                                     cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
                                     
                                     # Draw label
-                                    if batch_name_list is not None and label < len(batch_name_list):
-                                        label_name = batch_name_list[label]
-                                    else:
-                                        label_name = f"Class_{label}"
                                     label_text = f"{label_name}: {score:.2f}"
                                     
                                     # Get text size
@@ -426,6 +440,8 @@ def main(args):
                                     cv2.putText(img, label_text, (x1, y1 - baseline - 2), 
                                                font, font_scale, (0, 0, 0), thickness)
                     
+                    all_detections[str(frame_idx)] = frame_detections
+
                     # Write frame to video immediately
                     if out is not None:
                         img_bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
@@ -442,6 +458,41 @@ def main(args):
     if out is not None:
         out.release()
         print(f"Output video saved to: {output_video_path}")
+
+    # Save detections JSON if requested
+    save_detections = getattr(args, 'save_detections', None)
+    if save_detections and save_detections.lower() == 'none':
+        save_detections = None
+    if save_detections == 'auto':
+        input_video = getattr(args, 'input_video', None)
+        if input_video:
+            base = os.path.splitext(os.path.basename(input_video))[0]
+        else:
+            base = 'detections'
+        save_dir = os.path.dirname(output_video_path) if output_video_path else '.'
+        save_detections = os.path.join(save_dir, f"{base}_detections.json")
+    if save_detections:
+        # Ensure all frames have entries (even those with no detections)
+        for fidx in range(len(frames)):
+            key = str(fidx)
+            if key not in all_detections:
+                all_detections[key] = []
+
+        output_data = {
+            "video_path": getattr(args, 'input_video', None) or "",
+            "video_fps": video_fps,
+            "width": ori_width,
+            "height": ori_height,
+            "total_frames": len(frames),
+            "coordinate_format": "pixel_xyxy",
+            "class_names": batch_name_list,
+            "detector": "glee",
+            "confidence_threshold": confidence_threshold,
+            "detections": all_detections,
+        }
+        with open(save_detections, "w") as f:
+            json.dump(output_data, f, indent=2)
+        print(f"Detections saved to: {save_detections}")
 
 
 
@@ -462,6 +513,7 @@ if __name__ == "__main__":
     parser.add_argument('--disable_masking', dest='enable_masking', action='store_false', help='disable SAM segmentation masking to reduce GPU memory usage')
     parser.add_argument('--discovery_json', type=str, default=None, help='path to enhanced discovery result JSON file (from discover_classes.py --output-format enhanced)')
     parser.add_argument('--class_discovery_mode', choices=['simple', 'attributed', 'referring'], default='attributed', help='which class level to use from discovery JSON (default: attributed)')
+    parser.add_argument('--save_detections', type=str, default='auto', help='path to save detections JSON file, or "auto" to derive from input video name (default: auto). Use "none" to disable.')
 
     args = parser.parse_args()
     print("Command Line Args:", args)
