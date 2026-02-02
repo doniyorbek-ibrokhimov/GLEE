@@ -55,6 +55,7 @@ def process_video_with_sam3_video(
     class_names: List[str],
     model_name: str = "sam3.pt",
     confidence_threshold: float = 0.3,
+    min_box_area: int = 0,
     enable_masking: bool = True,
     device: str = "cuda",
     fp16: bool = False,
@@ -83,6 +84,7 @@ def process_video_with_sam3_video(
         class_names: Class names for text-prompted detection.
         model_name: SAM 3 model checkpoint name.
         confidence_threshold: Minimum confidence for detections.
+        min_box_area: Minimum bounding box area in pixels (0 = no filtering).
         enable_masking: Whether to generate and draw masks.
         device: Device string ('cuda' or 'cpu').
         fp16: Whether to use half precision.
@@ -248,6 +250,20 @@ def process_video_with_sam3_video(
                 if masks is not None:
                     masks = masks[conf_mask]
 
+                # Filter by minimum box area
+                if min_box_area > 0 and len(boxes_xyxy) > 0:
+                    box_widths = boxes_xyxy[:, 2] - boxes_xyxy[:, 0]
+                    box_heights = boxes_xyxy[:, 3] - boxes_xyxy[:, 1]
+                    box_areas = box_widths * box_heights
+                    area_mask = box_areas >= min_box_area
+                    boxes_xyxy = boxes_xyxy[area_mask]
+                    scores = scores[area_mask]
+                    cls_indices = cls_indices[area_mask]
+                    if track_ids is not None:
+                        track_ids = track_ids[area_mask]
+                    if masks is not None:
+                        masks = masks[area_mask]
+
                 label_names: List[str] = []
                 for i in range(len(boxes_xyxy)):
                     cls_idx = int(cls_indices[i])
@@ -267,20 +283,19 @@ def process_video_with_sam3_video(
                         "label": label_name,
                         "confidence": round(float(scores[i]), 4),
                     }
-                    if track_ids is not None:
-                        det_entry["track_id"] = int(track_ids[i])
+                    # Track IDs removed from JSON output
                     frame_detections.append(det_entry)
 
                 total_detections += len(boxes_xyxy)
 
-                # Draw annotated frame
+                # Draw annotated frame (track IDs removed from labels)
                 if out is not None:
                     annotated = draw_frame(
                         orig_frame_rgb,
                         boxes_xyxy,
                         label_names,
                         scores,
-                        track_ids=track_ids,
+                        track_ids=None,  # Don't show track IDs in labels
                         masks=masks,
                         enable_masking=enable_masking,
                     )
@@ -325,6 +340,11 @@ def main() -> None:
     parser.add_argument(
         "--confidence_threshold", type=float, default=0.3,
         help="Minimum confidence score (default: 0.3)",
+    )
+    parser.add_argument(
+        "--min_box_area", type=int, default=0,
+        help="Minimum bounding box area in pixels (default: 0, no filtering). "
+        "Example: 400 filters boxes smaller than 20x20 pixels",
     )
     parser.add_argument(
         "--skip_frames", type=int, default=1,
@@ -448,6 +468,7 @@ def main() -> None:
             class_names=class_names,
             model_name=args.sam3_model,
             confidence_threshold=args.confidence_threshold,
+            min_box_area=args.min_box_area,
             enable_masking=args.enable_masking,
             device=args.device,
             fp16=args.fp16,
