@@ -16,6 +16,9 @@ MODEL_PATH="weights/GLEE_Pro_joint.pth"
 CONFIG="projects/GLEE/configs/images/Pro/Stage2_joint_training_CLIPteacher_EVA02L.yaml"
 OUTPUT_VIDEO="../output_videos/_egocentric_folding_part1.output.mp4"
 
+# Ensure output directory exists
+mkdir -p "$(dirname "$OUTPUT_VIDEO")"
+
 # Dynamic class discovery via Gemini (set to false to use hardcoded classes below)
 USE_DYNAMIC_CLASSES=True
 # Set to true to ignore cached classes and re-run Gemini discovery
